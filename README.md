@@ -1,144 +1,215 @@
-# 🚀 Cursor IDE - Script de Instalação Inteligente
+# 🚀 Cursor IDE - Smart Installation Script
 
-Um script bash elegante e robusto para gerenciar o Cursor IDE no Linux, oferecendo uma experiência de instalação suave e interativa.
+An elegant and robust bash script for managing Cursor IDE on Linux, providing a smooth and interactive installation experience.
 
-## ✨ Características
+## ✨ Features
 
-- 🎯 Instalação inteligente e interativa
-- 🔄 Sistema de atualização com backup automático
-- 🧹 Desinstalação segura e completa
-- 🛠️ Ferramentas de reparo e manutenção
-- 📊 Barra de progresso visual
-- 🎨 Interface colorida e amigável
-- 🔒 Sistema de backup e recuperação
+- 🎯 Smart and interactive installation
+- 🔄 Automatic backup update system
+- 🧹 Safe and complete uninstallation
+- 🛠️ Repair and maintenance tools
+- 📊 Visual progress bar
+- 🎨 User-friendly colored interface
+- 🔒 Backup and recovery system
 
-## 📋 Pré-requisitos
+## 📋 Prerequisites
 
-- Sistema operacional Linux
-- Bash 4.0 ou superior
-- Conexão com a internet
-- 500MB de espaço livre em disco
-- Permissões de usuário adequadas
+- Linux operating system
+- Bash 4.0 or higher
+- Internet connection
+- 500MB free disk space
+- Appropriate user permissions
 
-## 🚀 Como Usar
+## 🚀 Quick Start
 
-### Instalação Básica
+### Basic Installation
 
 ```bash
-./acursor.sh --install
+./cursor-ai.sh --install
 ```
 
-### Outras Opções
+### Other Options
 
 ```bash
-./acursor.sh --help     # Mostra ajuda
-./acursor.sh --repair   # Repara instalação
-./acursor.sh --uninstall # Desinstala o Cursor
+./cursor-ai.sh --help      # Show help
+./cursor-ai.sh --repair    # Repair installation
+./cursor-ai.sh --uninstall # Uninstall Cursor
 ```
 
-## 🎯 Funcionalidades Detalhadas
+## 🎯 Detailed Features
 
-### 1. Instalação Inteligente
-- Verifica instalações existentes
-- Detecta espaço em disco disponível
-- Testa conexão com a internet
-- Cria estrutura de diretórios necessária
-- Configura atalhos e integrações com o sistema
+### 1. Smart Installation
+- Checks for existing installations
+- Detects available disk space
+- Tests internet connection
+- Creates necessary directory structure
+- Configures shortcuts and system integrations
 
-### 2. Gerenciamento de Instalações Existentes
-Ao encontrar instalações existentes, oferece as seguintes opções:
+### 2. Existing Installation Management
+When finding existing installations, offers the following options:
 
-- **U - Atualizar**: Atualiza uma instalação existente
-  - Cria backup automático
-  - Baixa nova versão
-  - Sistema de rollback em caso de falha
+- **U - Update**: Updates an existing installation
+  - Creates automatic backup
+  - Downloads new version
+  - Rollback system in case of failure
   
-- **R - Remover**: Remove uma instalação específica
-  - Remove todos os arquivos associados
-  - Limpa entradas do sistema
-  - Atualiza cache do sistema
+- **R - Remove**: Removes a specific installation
+  - Removes all associated files
+  - Cleans system entries
+  - Updates system cache
   
-- **A - Remover Tudo**: Remove todas as instalações encontradas
-  - Limpeza completa do sistema
-  - Remoção de todas as versões
+- **A - Remove All**: Removes all found installations
+  - Complete system cleanup
+  - Removal of all versions
   
-- **S - Substituir**: Mantém instalações existentes e adiciona nova
-  - Instalação paralela
-  - Mantém versões anteriores
+- **S - Substitute**: Keeps existing installations and adds new one
+  - Parallel installation
+  - Keeps previous versions
 
-### 3. Sistema de Atualização
-- Download com barra de progresso
-- Verificação de integridade
-- Backup automático da versão atual
-- Restauração automática em caso de falha
-- Validação pós-download
+### 3. Update System
+- Progress bar download
+- Integrity verification
+- Automatic backup of current version
+- Automatic restoration in case of failure
+- Post-download validation
 
-### 4. Recursos de Segurança
-- Verificação de dependências
-- Validação de downloads
-- Sistema de backup e restauração
-- Tratamento de erros
-- Logs detalhados
+### 4. Security Features
+- Dependency checking
+- Download validation
+- Backup and restore system
+- Error handling
+- Detailed logging
 
-### 5. Interface Amigável
-- 🎨 Saída colorida
-- ⏳ Barras de progresso
-- ✅ Indicadores de sucesso/falha
-- 📝 Logs informativos
-- 🔄 Status em tempo real
+### 5. User-Friendly Interface
+- 🎨 Colored output
+- ⏳ Progress bars
+- ✅ Success/failure indicators
+- 📝 Informative logs
+- 🔄 Real-time status
 
-## 🛠️ Opções de Linha de Comando
+## 🛠️ Command Line Options
 
-| Opção | Descrição |
-|-------|-----------|
-| `-i, --install` | Instala o Cursor IDE |
-| `-u, --uninstall` | Remove o Cursor IDE |
-| `-r, --repair` | Repara a instalação |
-| `-h, --help` | Mostra ajuda |
+| Option | Description |
+|--------|-------------|
+| `-i, --install` | Install Cursor IDE |
+| `-u, --uninstall` | Remove Cursor IDE |
+| `-r, --repair` | Repair installation |
+| `-h, --help` | Show help message |
 
-## 📝 Logs e Diagnóstico
+## 📝 Logs and Diagnostics
 
-O script mantém logs detalhados em:
-- \`~/.cursor_log\` para logs de execução
-- Mensagens coloridas no terminal
-- Informações de progresso em tempo real
+The script maintains detailed logs in:
+- \`~/.cursor_log\` for execution logs
+- Colored messages in terminal
+- Real-time progress information
 
-## 🔧 Solução de Problemas
+## 🔧 Troubleshooting
 
-### Espaço Insuficiente
+### Insufficient Space
 ```bash
-# Verifique o espaço disponível
+# Check available space
 df -h
 ```
 
-### Falha na Atualização
-- O script mantém backup automático
-- Restauração automática em caso de falha
-- Logs detalhados para diagnóstico
+### Update Failure
+- Script maintains automatic backup
+- Automatic restoration on failure
+- Detailed diagnostic logs
 
-### Problemas de Permissão
+### Permission Issues
 ```bash
-# Verifique as permissões
+# Check permissions
 ls -l ~/.local/bin/cursor
 ```
 
-## 🤝 Contribuindo
+## 🤝 Contributing
 
-Sinta-se à vontade para:
-1. Abrir issues
-2. Enviar pull requests
-3. Sugerir melhorias
-4. Reportar bugs
+Feel free to:
+1. Open issues
+2. Submit pull requests
+3. Suggest improvements
+4. Report bugs
 
-## 📜 Licença
+## 📜 License
 
-Este script é distribuído sob a licença MIT.
+This script is distributed under the MIT license.
 
-## ✨ Agradecimentos
+## ✨ Acknowledgments
 
-- Comunidade Cursor IDE
-- Contribuidores do projeto
-- Usuários que fornecem feedback
+- Cursor IDE Community
+- Project contributors
+- Users providing feedback
+
+## 🔍 Advanced Usage
+
+### Custom Installation Directory
+You can specify a custom installation directory:
+```bash
+./cursor-ai.sh --install
+# Then follow the prompts to set custom directory
+```
+
+### Multiple Installations
+The script can handle multiple installations:
+- Different versions
+- Different locations
+- Different configurations
+
+### Sandbox Mode
+Choose between:
+- Sandboxed mode for enhanced security
+- No-sandbox mode for better performance
+
+### Update Management
+- Selective updates
+- Version control
+- Backup management
+
+## 🛡️ Security Features
+
+1. **Download Security**
+   - Integrity checks
+   - Secure connections
+   - Validation of binaries
+
+2. **System Protection**
+   - Safe file operations
+   - Permission management
+   - Error prevention
+
+3. **Data Safety**
+   - Automatic backups
+   - Safe updates
+   - Rollback capability
+
+## 📚 Technical Details
+
+### Directory Structure
+```
+${HOME}/
+├── Applications/
+│   └── cursor.AppImage
+├── .local/
+│   ├── bin/
+│   │   └── cursor
+│   └── share/
+│       ├── applications/
+│       │   └── cursor.desktop
+│       └── icons/
+│           └── cursor-icon.svg
+└── .cursor_log
+```
+
+### System Requirements
+- **CPU**: Any modern processor
+- **RAM**: Minimal usage
+- **Disk**: 500MB free space
+- **Network**: Active internet connection
+
+### Dependencies
+- curl
+- gtk-update-icon-cache
+- update-desktop-database
 
 ---
-Desenvolvido com ❤️ por Truuta 
+Made with ❤️ by Truuta 
