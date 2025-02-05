@@ -36,21 +36,10 @@ ICON_PATH="${ICON_DIR}/cursor-icon.svg"
 DESKTOP_FILE_PATH="${DESKTOP_DIR}/cursor.desktop"
 LAUNCHER_SCRIPT="${BIN_DIR}/cursor"
 
-# Color and style configuration
-declare -A COLORS=(
-    ["INFO"]="\033[0;34m"     # Blue
-    ["SUCCESS"]="\033[0;32m"  # Green
-    ["WARNING"]="\033[0;33m"  # Yellow
-    ["ERROR"]="\033[0;31m"    # Red
-    ["RESET"]="\033[0m"       # Reset
-    ["BOLD"]="\033[1m"        # Bold
-    ["PROGRESS"]="\033[0;36m" # Cyan
-)
-
 # Function to clean temporary files
 cleanup() {
     local exit_code=$?
-    log "INFO" "Cleaning up temporary files..."
+    log "Cleaning up temporary files..."
     rm -rf "${TEMP_DIR}" 2>/dev/null || true
     exit $exit_code
 }
@@ -68,7 +57,7 @@ log() {
         level=$1
         shift
     fi
-    printf "[%s] ${COLORS[$level]}${COLORS[BOLD]}[%s]${COLORS[RESET]} %s\n" "$timestamp" "$level" "$*"
+    printf "[%s] [%s] %s\n" "$timestamp" "$level" "$*"
 }
 
 error() {
@@ -84,37 +73,26 @@ ask() {
     local answer
     
     while true; do
-        printf "${COLORS[INFO]}${question}${COLORS[RESET]}"
+        printf "%s" "$question" >&2
         if [[ -n $default ]]; then
-            printf " (default: ${COLORS[BOLD]}%s${COLORS[RESET]})" "$default"
+            printf " (padrão: %s)" "$default" >&2
         fi
-        if [[ -n $valid_options ]]; then
-            printf " [%s]" "$valid_options"
-        fi
-        printf ": "
-        read -r answer
+        printf ": " >&2
+        read -r answer </dev/tty
         answer=${answer:-$default}
+        answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')
         
-        # Response validation
-        if [[ -n $valid_options ]]; then
-            if [[ $answer =~ ^[$valid_options]$ ]]; then
-                break
-            else
-                log "ERROR" "Invalid option. Please choose one of: [$valid_options]"
+        case "$answer" in
+            u|r|a|s|c)
+                echo "$answer"
+                return 0
+                ;;
+            *)
+                log "ERROR" "Opção inválida. Por favor, escolha uma das opções disponíveis." >&2
                 continue
-            fi
-        else
-            # If no specific valid options, accept any non-empty response
-            if [[ -n $answer ]]; then
-                break
-            else
-                log "ERROR" "Please provide a valid response."
-                continue
-            fi
-        fi
+                ;;
+        esac
     done
-    
-    echo "$answer"
 }
 
 # Function for showing progress bar
@@ -126,10 +104,10 @@ show_progress() {
     local filled=$((width * current / total))
     local empty=$((width - filled))
     
-    printf "\r${COLORS[PROGRESS]}["
+    printf "\r["
     printf "%${filled}s" '' | tr ' ' '='
     printf "%${empty}s" '' | tr ' ' ' '
-    printf "] %3d%%${COLORS[RESET]}" "$percentage"
+    printf "] %3d%%" "$percentage"
     
     if [ "$current" -eq "$total" ]; then
         printf "\n"
@@ -147,32 +125,30 @@ download_with_progress() {
     mkdir -p "${TEMP_DIR}"
     
     while [ $retries -lt $MAX_RETRIES ]; do
-        log "INFO" "Downloading $description (attempt $((retries + 1))/$MAX_RETRIES)..."
-        
-        if curl -L --progress-bar --connect-timeout $TIMEOUT "$url" -o "$temp_file" 2>&1 | \
-        stdbuf -o0 tr '\r' '\n' | grep -o "[0-9]*\.[0-9]%" | while read -r percent; do
-            percent=${percent%.*}
-            show_progress "$percent" 100
-        done; then
-            # Verify download integrity
+        log "INFO" "Baixando $description (tentativa $((retries + 1))/$MAX_RETRIES)..."
+
+        if curl -L --progress-bar --connect-timeout $TIMEOUT "$url" -o "$temp_file"; then
             if [[ -s "$temp_file" ]]; then
                 mv "$temp_file" "$output"
-                log "SUCCESS" "Download completed successfully!"
+                log "SUCCESS" "Download concluído com sucesso!"
                 return 0
             else
-                log "ERROR" "Downloaded file is empty or corrupted."
+                log "ERROR" "Arquivo baixado está vazio ou corrompido."
             fi
+        else
+            log "ERROR" "Falha durante o download com curl."
         fi
         
         retries=$((retries + 1))
         if [ $retries -lt $MAX_RETRIES ]; then
             local wait_time=$((retries * 5))
-            log "WARNING" "Download failed. Retrying in $wait_time seconds..."
+            log "WARNING" "Download falhou. Tentando novamente em $wait_time segundos..."
             sleep $wait_time
         fi
     done
-    
-    error "Failed to download $description after $MAX_RETRIES attempts."
+
+    log "ERROR" "Falha ao baixar $description após $MAX_RETRIES tentativas."
+    return 1
 }
 
 # Function to check disk space
@@ -331,17 +307,17 @@ check_existing_installation() {
         # Show options to user
         cat << EOF
 
-${COLORS[INFO]}Available options:${COLORS[RESET]}
-${COLORS[WARNING]}U${COLORS[RESET]} - Update existing installation
-${COLORS[WARNING]}R${COLORS[RESET]} - Remove specific installation
-${COLORS[WARNING]}A${COLORS[RESET]} - Remove all installations
-${COLORS[WARNING]}S${COLORS[RESET]} - Replace keeping existing
-${COLORS[WARNING]}C${COLORS[RESET]} - Cancel installation
+Opções disponíveis:
+[U] - Atualizar instalação existente
+[R] - Remover instalação específica
+[A] - Remover todas as instalações
+[S] - Substituir mantendo existente
+[C] - Cancelar instalação
 
 EOF
         
-        local action=$(ask "What do you want to do?" "C" "UuRrAaSsCc")
-        case "${action,,}" in
+        local action=$(ask "Digite sua escolha" "c")
+        case "$action" in
             u)
                 if [[ $num_installations -gt 1 ]]; then
                     while true; do
@@ -558,7 +534,7 @@ install_cursor() {
     
     # Ask user about installation directories
     APP_DIR=$(ask "Enter the application installation directory" "${HOME}/Applications")
-    SANDBOX_MODE=$(ask "Do you want to run Cursor without sandbox?" "s" "sn")
+    SANDBOX_MODE=$(ask "Deseja executar o Cursor com sandbox?" "s" "s n")
     
     # Create necessary directories
     mkdir -p "${APP_DIR}" "${ICON_DIR}" "${DESKTOP_DIR}" "${BIN_DIR}" || error "Failed to create directories"
@@ -607,21 +583,21 @@ verify_installation() {
 show_post_install_message() {
     cat << EOF
 
-${COLORS[SUCCESS]}${COLORS[BOLD]}Installation Completed!${COLORS[RESET]}
+Installation Completed!
 
-${COLORS[INFO]}To run Cursor, you can:${COLORS[RESET]}
+To run Cursor, you can:
 1. Search for 'Cursor' in your application launcher
 2. Run in terminal: cursor
 3. Run directly: ${APPIMAGE_PATH}
 4. Open files/directories: cursor <file_or_directory>
 
-${COLORS[WARNING]}Notes:${COLORS[RESET]}
+Notes:
 - You may need to logout and login again for all changes to take effect
 - Execution logs are saved in ~/.cursor_log
 - To repair the installation: $0 --repair
 - To uninstall: $0 --uninstall
 
-${COLORS[INFO]}Installed version: ${VERSION}${COLORS[RESET]}
+Installed version: ${VERSION}
 EOF
 }
 
@@ -672,13 +648,13 @@ uninstall_cursor() {
 # Help function
 show_help() {
     cat << EOF
-${COLORS[BOLD]}Usage: $0 [OPTION]${COLORS[RESET]}
+Usage: $0 [OPTION]
 
 Options:
-  ${COLORS[INFO]}-i, --install${COLORS[RESET]}     Install Cursor (default)
-  ${COLORS[WARNING]}-u, --uninstall${COLORS[RESET]}   Uninstall Cursor
-  ${COLORS[INFO]}-r, --repair${COLORS[RESET]}      Repair existing installation
-  ${COLORS[INFO]}-h, --help${COLORS[RESET]}        Show this help message
+  -i, --install     Install Cursor (default)
+  -u, --uninstall   Uninstall Cursor
+  -r, --repair      Repair existing installation
+  -h, --help        Show this help message
 
 EOF
 }
@@ -728,4 +704,5 @@ main() {
 }
 
 # Execute the script
+mkdir -p "${APP_DIR}" || error "Falha ao criar diretório de aplicativos: ${APP_DIR}"
 main "$@"
