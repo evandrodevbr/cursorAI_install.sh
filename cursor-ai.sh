@@ -5,7 +5,7 @@
 # 
 # This script manages the complete lifecycle of Cursor IDE on Linux, including:
 # - Installation with dependency checking
-# - Safe uninstallation
+# - Safe uninstallation,
 # - Repair of corrupted installations
 # - Multiple installation management
 # 
@@ -28,7 +28,6 @@ DESKTOP_DIR="${HOME}/.local/share/applications"
 BIN_DIR="${HOME}/.local/bin"
 
 # File paths
-DOWNLOAD_URL="https://downloader.cursor.sh/linux/appImage/x64"
 ICON_DOWNLOAD_URL="https://www.cursor.com/assets/images/logo.svg"
 APPIMAGE_NAME="cursor.AppImage"
 APPIMAGE_PATH="${APP_DIR}/${APPIMAGE_NAME}"
@@ -75,23 +74,27 @@ ask() {
     while true; do
         printf "%s" "$question" >&2
         if [[ -n $default ]]; then
-            printf " (padrão: %s)" "$default" >&2
+            printf " (default: %s)" "$default" >&2
         fi
         printf ": " >&2
         read -r answer </dev/tty
         answer=${answer:-$default}
         answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')
         
-        case "$answer" in
-            u|r|a|s|c)
-                echo "$answer"
-                return 0
-                ;;
-            *)
-                log "ERROR" "Opção inválida. Por favor, escolha uma das opções disponíveis." >&2
-                continue
-                ;;
-        esac
+        # If no specific validation, accept any input
+        if [[ -z "$valid_options" ]]; then
+            echo "$answer"
+            return 0
+        fi
+        
+        # Validate against provided options
+        if [[ "$valid_options" =~ $answer ]]; then
+            echo "$answer"
+            return 0
+        else
+            log "ERROR" "Invalid option. Valid options are: $valid_options" >&2
+            continue
+        fi
     done
 }
 
@@ -125,29 +128,29 @@ download_with_progress() {
     mkdir -p "${TEMP_DIR}"
     
     while [ $retries -lt $MAX_RETRIES ]; do
-        log "INFO" "Baixando $description (tentativa $((retries + 1))/$MAX_RETRIES)..."
+        log "INFO" "Downloading $description (attempt $((retries + 1))/$MAX_RETRIES)..."
 
         if curl -L --progress-bar --connect-timeout $TIMEOUT "$url" -o "$temp_file"; then
             if [[ -s "$temp_file" ]]; then
                 mv "$temp_file" "$output"
-                log "SUCCESS" "Download concluído com sucesso!"
+                log "SUCCESS" "Download completed successfully!"
                 return 0
             else
-                log "ERROR" "Arquivo baixado está vazio ou corrompido."
+                log "ERROR" "Downloaded file is empty or corrupted."
             fi
         else
-            log "ERROR" "Falha durante o download com curl."
+            log "ERROR" "Download failed with curl."
         fi
         
         retries=$((retries + 1))
         if [ $retries -lt $MAX_RETRIES ]; then
             local wait_time=$((retries * 5))
-            log "WARNING" "Download falhou. Tentando novamente em $wait_time segundos..."
+            log "WARNING" "Download failed. Retrying in $wait_time seconds..."
             sleep $wait_time
         fi
     done
 
-    log "ERROR" "Falha ao baixar $description após $MAX_RETRIES tentativas."
+    log "ERROR" "Failed to download $description after $MAX_RETRIES attempts."
     return 1
 }
 
@@ -161,6 +164,184 @@ check_disk_space() {
     if [[ $available_space -lt $required_space ]]; then
         error "Insufficient disk space. Required: 500MB, Available: $((available_space / 1024))MB"
     fi
+}
+
+# Function to detect Linux distribution and architecture
+detect_distribution() {
+    local distro=""
+    local arch=""
+    local recommended_format=""
+    
+    # Detect architecture
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64) arch="x64" ;;
+        aarch64) arch="arm64" ;;
+        armv7l) arch="armv7l" ;;
+        *) arch="x64" ;; # fallback
+    esac
+    
+    # Detect distribution
+    if [[ -f /etc/os-release ]]; then
+        source /etc/os-release
+        case "$ID" in
+            ubuntu|debian|linuxmint|pop|elementary)
+                distro="Ubuntu/Debian"
+                recommended_format="deb"
+                ;;
+            fedora|rhel|centos|rocky|almalinux)
+                distro="Red Hat/Fedora"
+                recommended_format="rpm"
+                ;;
+            opensuse*|sles)
+                distro="openSUSE"
+                recommended_format="rpm"
+                ;;
+            arch|manjaro|endeavouros)
+                distro="Arch"
+                recommended_format="appimage"
+                ;;
+            *)
+                distro="Other"
+                recommended_format="appimage"
+                ;;
+        esac
+    else
+        distro="Unknown"
+        recommended_format="appimage"
+    fi
+    
+    # Export for use in other functions
+    export DETECTED_DISTRO="$distro"
+    export DETECTED_ARCH="$arch"
+    export RECOMMENDED_FORMAT="$recommended_format"
+    
+    log "INFO" "Detected distribution: $distro"
+    log "INFO" "Detected architecture: $arch"
+    log "INFO" "Recommended format: $recommended_format"
+}
+
+# Function to check package manager availability
+check_package_manager() {
+    local format=$1
+    local has_manager=false
+    
+    case "$format" in
+        "deb")
+            if command -v dpkg >/dev/null 2>&1; then
+                has_manager=true
+                log "SUCCESS" "✓ dpkg available"
+            fi
+            if command -v apt >/dev/null 2>&1 || command -v apt-get >/dev/null 2>&1; then
+                log "SUCCESS" "✓ apt available"
+            fi
+            ;;
+        "rpm")
+            if command -v rpm >/dev/null 2>&1; then
+                has_manager=true
+                log "SUCCESS" "✓ rpm available"
+            fi
+            if command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1 || command -v zypper >/dev/null 2>&1; then
+                log "SUCCESS" "✓ RPM package manager available"
+            fi
+            ;;
+        "appimage")
+            has_manager=true
+            log "SUCCESS" "✓ AppImage does not require package manager"
+            ;;
+    esac
+    
+    if [[ "$has_manager" = false ]]; then
+        log "WARNING" "Package manager for $format not found"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Function to get download URL for specific format and architecture
+get_download_url() {
+    local format=$1
+    local arch=$2
+    local api_url="https://api2.cursor.sh/updates/download/golden/linux-${arch}-${format}/cursor/"
+    local final_url=""
+    
+    log "INFO" "Getting download URL for $format ($arch)..." >&2
+    
+    # Get the redirect URL
+    final_url=$(curl -sI "$api_url" 2>/dev/null | grep -i "location:" | cut -d' ' -f2 | tr -d '\r\n')
+    
+    if [[ -n "$final_url" ]]; then
+        log "SUCCESS" "URL obtained: $final_url" >&2
+        echo "$final_url"
+    else
+        log "ERROR" "Failed to get download URL" >&2
+        return 1
+    fi
+}
+
+# Function to list available packages
+list_available_packages() {
+    local arch="$DETECTED_ARCH"
+    local packages=()
+    local formats=("appimage" "deb" "rpm")
+    
+    log "INFO" "Fetching available packages for architecture $arch..."
+    
+    # First, collect all data
+    log "INFO" "Collecting package information..."
+    for format in "${formats[@]}"; do
+        log "INFO" "Checking $format package availability..."
+        local url
+        local version=""
+        local size=""
+        
+        url=$(get_download_url "$format" "$arch")
+        if [[ -n "$url" ]]; then
+            # Extract version from filename
+            version=$(echo "$url" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1)
+            
+            # Get file size
+            log "INFO" "Getting file size for $format package..."
+            size=$(curl -sI "$url" 2>/dev/null | grep -i "content-length" | cut -d' ' -f2 | tr -d '\r\n')
+            if [[ -n "$size" ]]; then
+                size=$((size / 1024 / 1024))
+                size="${size}MB"
+            else
+                size="N/A"
+            fi
+            
+            packages+=("$format|$version|$size|$url")
+            log "SUCCESS" "✓ $format package available (v$version, $size)"
+        else
+            packages+=("$format|N/A|N/A|")
+            log "WARNING" "✗ $format package not available"
+        fi
+    done
+    
+    # Now display the formatted table
+    log "INFO" "Displaying available packages..."
+    echo ""
+    echo "┌─────────────────────────────────────────────────────────────┐"
+    echo "│                    AVAILABLE PACKAGES                       │"
+    echo "├─────────────────────────────────────────────────────────────┤"
+    echo "│ Architecture: $arch"
+    echo "│"
+    
+    for package in "${packages[@]}"; do
+        IFS='|' read -r format version size url <<< "$package"
+        if [[ -n "$url" ]]; then
+            printf "│ %-10s │ v%-8s │ %-8s │ Available ✓\n" "$format" "$version" "$size"
+        else
+            printf "│ %-10s │ %-8s │ %-8s │ Unavailable ✗\n" "$format" "N/A" "N/A"
+        fi
+    done
+    
+    echo "└─────────────────────────────────────────────────────────────┘"
+    echo ""
+    
+    # Export packages for selection
+    export AVAILABLE_PACKAGES=("${packages[@]}")
 }
 
 # Function to check internet connection
@@ -307,16 +488,16 @@ check_existing_installation() {
         # Show options to user
         cat << EOF
 
-Opções disponíveis:
-[U] - Atualizar instalação existente
-[R] - Remover instalação específica
-[A] - Remover todas as instalações
-[S] - Substituir mantendo existente
-[C] - Cancelar instalação
+Available options:
+[U] - Update existing installation
+[R] - Remove specific installation
+[A] - Remove all installations
+[S] - Replace keeping existing
+[C] - Cancel installation
 
 EOF
         
-        local action=$(ask "Digite sua escolha" "c")
+        local action=$(ask "Enter your choice" "c" "urascdURASDC")
         case "$action" in
             u)
                 if [[ $num_installations -gt 1 ]]; then
@@ -335,8 +516,8 @@ EOF
                                 fi
                             else
                                 log "ERROR" "Only AppImage installations can be updated."
-                                local try_again=$(ask "Do you want to choose another installation? (s/n)" "s" "sn")
-                                if [[ "${try_again,,}" != "s" ]]; then
+                                local try_again=$(ask "Do you want to choose another installation? (y/n)" "y" "ynYN")
+                                if [[ "${try_again,,}" != "y" ]]; then
                                     break
                                 fi
                             fi
@@ -374,8 +555,8 @@ EOF
                     remove_specific_installation "${installations[0]}"
                 fi
                 
-                local continue_install=$(ask "Do you want to continue with the Cursor installation? (s/n)" "s" "sn")
-                if [[ "${continue_install,,}" = "s" ]]; then
+                local continue_install=$(ask "Do you want to continue with the Cursor installation? (y/n)" "y" "ynYN")
+                if [[ "${continue_install,,}" = "y" ]]; then
                     log "INFO" "Continuing with installation..."
                     return 0
                 else
@@ -393,8 +574,8 @@ EOF
                 done
                 
                 if [[ "$all_success" = true ]]; then
-                    local continue_install=$(ask "All installations have been removed. Do you want to continue with the new installation? (s/n)" "s" "sn")
-                    if [[ "${continue_install,,}" = "s" ]]; then
+                    local continue_install=$(ask "All installations have been removed. Do you want to continue with the new installation? (y/n)" "y" "ynYN")
+                    if [[ "${continue_install,,}" = "y" ]]; then
                         log "INFO" "Continuing with installation..."
                         return 0
                     else
@@ -446,7 +627,9 @@ repair_installation() {
         
         # Download missing files
         if [[ ! -f "${APPIMAGE_PATH}" ]]; then
-            download_with_progress "${DOWNLOAD_URL}" "${APPIMAGE_PATH}" "Cursor AppImage"
+            local download_url
+            download_url=$(get_download_url "appimage" "x64")
+            download_with_progress "$download_url" "${APPIMAGE_PATH}" "Cursor AppImage"
             chmod +x "${APPIMAGE_PATH}"
         fi
         
@@ -523,32 +706,222 @@ EOF
     log "SUCCESS" "Launcher script created in: ${LAUNCHER_SCRIPT}"
 }
 
-# Installation function
-install_cursor() {
-    log "INFO" "Starting Cursor IDE v${VERSION} installation..."
+# Function to install AppImage
+install_appimage() {
+    local download_url=$1
+    local appimage_path=$2
     
-    # Preliminary checks
-    check_disk_space
-    check_internet_connection
-    check_existing_installation
+    log "INFO" "Installing Cursor AppImage..."
     
-    # Ask user about installation directories
-    APP_DIR=$(ask "Enter the application installation directory" "${HOME}/Applications")
-    SANDBOX_MODE=$(ask "Deseja executar o Cursor com sandbox?" "s" "s n")
+    # Download AppImage
+    download_with_progress "$download_url" "$appimage_path" "Cursor AppImage"
+    chmod +x "$appimage_path"
     
-    # Create necessary directories
-    mkdir -p "${APP_DIR}" "${ICON_DIR}" "${DESKTOP_DIR}" "${BIN_DIR}" || error "Failed to create directories"
-    
-    # Downloads with retry and verification
-    download_with_progress "${DOWNLOAD_URL}" "${APPIMAGE_PATH}" "Cursor AppImage"
-    chmod +x "${APPIMAGE_PATH}"
-    
+    # Download icon if not exists
     if [ ! -f "${ICON_PATH}" ]; then
         download_with_progress "${ICON_DOWNLOAD_URL}" "${ICON_PATH}" "Cursor icon"
     fi
     
     create_desktop_file
     create_launcher_script
+    
+    log "SUCCESS" "✓ AppImage installed successfully!"
+}
+
+# Function to install DEB package
+install_deb() {
+    local download_url=$1
+    local temp_deb="${TEMP_DIR}/cursor.deb"
+    
+    log "INFO" "Installing Cursor DEB package..."
+    
+    # Download DEB package
+    download_with_progress "$download_url" "$temp_deb" "Cursor DEB package"
+    
+    # Check if sudo is required
+    if [[ $EUID -ne 0 ]]; then
+        log "INFO" "Installing DEB package (may require sudo password)..."
+        if sudo dpkg -i "$temp_deb"; then
+            log "SUCCESS" "✓ DEB package installed successfully!"
+        else
+            log "WARNING" "dpkg installation failed, trying apt..."
+            sudo apt-get update && sudo apt-get install -f
+            if sudo dpkg -i "$temp_deb"; then
+                log "SUCCESS" "✓ DEB package installed successfully!"
+            else
+                error "Failed to install DEB package"
+            fi
+        fi
+    else
+        if dpkg -i "$temp_deb"; then
+            log "SUCCESS" "✓ DEB package installed successfully!"
+        else
+            error "Failed to install DEB package"
+        fi
+    fi
+    
+    # Clean up
+    rm -f "$temp_deb"
+}
+
+# Function to install RPM package
+install_rpm() {
+    local download_url=$1
+    local temp_rpm="${TEMP_DIR}/cursor.rpm"
+    
+    log "INFO" "Installing Cursor RPM package..."
+    
+    # Download RPM package
+    download_with_progress "$download_url" "$temp_rpm" "Cursor RPM package"
+    
+    # Check if sudo is required
+    if [[ $EUID -ne 0 ]]; then
+        log "INFO" "Installing RPM package (may require sudo password)..."
+        
+        # Try different package managers
+        if command -v dnf >/dev/null 2>&1; then
+            sudo dnf install -y "$temp_rpm"
+        elif command -v yum >/dev/null 2>&1; then
+            sudo yum install -y "$temp_rpm"
+        elif command -v zypper >/dev/null 2>&1; then
+            sudo zypper install -y "$temp_rpm"
+        else
+            sudo rpm -i "$temp_rpm"
+        fi
+        
+        if [[ $? -eq 0 ]]; then
+            log "SUCCESS" "✓ RPM package installed successfully!"
+        else
+            error "Failed to install RPM package"
+        fi
+    else
+        if rpm -i "$temp_rpm"; then
+            log "SUCCESS" "✓ RPM package installed successfully!"
+        else
+            error "Failed to install RPM package"
+        fi
+    fi
+    
+    # Clean up
+    rm -f "$temp_rpm"
+}
+
+# Function to select package format
+select_package_format() {
+    local choice=""
+    local valid_formats=("appimage" "deb" "rpm")
+    
+    echo ""
+    echo "┌─────────────────────────────────────────────────────────────┐"
+    echo "│                    PACKAGE SELECTION                      │"
+    echo "├─────────────────────────────────────────────────────────────┤"
+    echo "│ Distribution: $DETECTED_DISTRO"
+    echo "│ Architecture: $DETECTED_ARCH"
+    echo "│ Recommended: $RECOMMENDED_FORMAT"
+    echo "│"
+    echo "│ Available options:"
+    echo "│ [1] AppImage - Universal, no root privileges required"
+    echo "│ [2] DEB      - For Ubuntu/Debian (may require sudo)"
+    echo "│ [3] RPM      - For Fedora/openSUSE (may require sudo)"
+    echo "└─────────────────────────────────────────────────────────────┘"
+    echo ""
+    
+    while true; do
+        printf "Choose package format (1-3) [default: %s]: " "$RECOMMENDED_FORMAT" >&2
+        read -r choice </dev/tty
+        
+        # Set default if empty
+        if [[ -z "$choice" ]]; then
+            case "$RECOMMENDED_FORMAT" in
+                "appimage") choice="1" ;;
+                "deb") choice="2" ;;
+                "rpm") choice="3" ;;
+                *) choice="1" ;;
+            esac
+        fi
+        
+        case "$choice" in
+            1)
+                SELECTED_FORMAT="appimage"
+                return 0
+                ;;
+            2)
+                SELECTED_FORMAT="deb"
+                return 0
+                ;;
+            3)
+                SELECTED_FORMAT="rpm"
+                return 0
+                ;;
+            *)
+                log "ERROR" "Invalid option. Choose 1, 2, or 3."
+                ;;
+        esac
+    done
+}
+
+# Installation function
+install_cursor() {
+    log "INFO" "Starting Cursor IDE v${VERSION} installation..."
+    
+    # Preliminary checks
+    detect_distribution
+    check_disk_space
+    check_internet_connection
+    check_existing_installation
+    
+    # List available packages and get user selection
+    list_available_packages
+    local selected_format
+    select_package_format
+    selected_format="$SELECTED_FORMAT"
+    
+    # Validate package manager for selected format
+    if ! check_package_manager "$selected_format"; then
+        log "WARNING" "Package manager for $selected_format not available"
+        local fallback=$(ask "Do you want to use AppImage as alternative? (y/n)" "y" "ynYN")
+        if [[ "${fallback,,}" = "y" ]]; then
+            selected_format="appimage"
+            log "INFO" "Switching to AppImage format"
+        else
+            error "Installation cancelled"
+        fi
+    fi
+    
+    # Get download URL for selected format
+    log "INFO" "Getting download URL for selected format: $selected_format"
+    local download_url
+    download_url=$(get_download_url "$selected_format" "$DETECTED_ARCH")
+    
+    if [[ -z "$download_url" ]]; then
+        error "Failed to get download URL for $selected_format"
+    fi
+    
+    # Configure installation paths (only for AppImage)
+    if [[ "$selected_format" = "appimage" ]]; then
+        APP_DIR=$(ask "Enter the application installation directory" "${HOME}/Applications")
+        SANDBOX_MODE=$(ask "Do you want to run Cursor with sandbox?" "y" "ynYN")
+        
+        # Create necessary directories
+        mkdir -p "${APP_DIR}" "${ICON_DIR}" "${DESKTOP_DIR}" "${BIN_DIR}" || error "Failed to create directories"
+        
+        # Update paths
+        APPIMAGE_PATH="${APP_DIR}/cursor.AppImage"
+        LAUNCHER_SCRIPT="${BIN_DIR}/cursor"
+    fi
+    
+    # Install based on format
+    case "$selected_format" in
+        "appimage")
+            install_appimage "$download_url" "$APPIMAGE_PATH"
+            ;;
+        "deb")
+            install_deb "$download_url"
+            ;;
+        "rpm")
+            install_rpm "$download_url"
+            ;;
+    esac
     
     # Verify installation
     verify_installation
@@ -583,21 +956,31 @@ verify_installation() {
 show_post_install_message() {
     cat << EOF
 
-Installation Completed!
+┌─────────────────────────────────────────────────────────────┐
+│                    INSTALLATION COMPLETED!                  │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ To run Cursor, you can:                                     │
+│                                                             │
+│ 1. Search for 'Cursor' in your application launcher        │
+│ 2. Run in terminal: cursor                                 │
+│ 3. Run directly: ${APPIMAGE_PATH}                          │
+│ 4. Open files/directories: cursor <file_or_directory>     │
+│                                                             │
+│ Important notes:                                           │
+│                                                             │
+│ • You may need to logout/login for all changes to take     │
+│   effect                                                   │
+│ • Execution logs are saved in ~/.cursor_log                │
+│ • To repair installation: $0 --repair                       │
+│ • To uninstall: $0 --uninstall                              │
+│                                                             │
+│ Installed version: ${VERSION}                              │
+│ Distribution: $DETECTED_DISTRO                             │
+│ Architecture: $DETECTED_ARCH                               │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
 
-To run Cursor, you can:
-1. Search for 'Cursor' in your application launcher
-2. Run in terminal: cursor
-3. Run directly: ${APPIMAGE_PATH}
-4. Open files/directories: cursor <file_or_directory>
-
-Notes:
-- You may need to logout and login again for all changes to take effect
-- Execution logs are saved in ~/.cursor_log
-- To repair the installation: $0 --repair
-- To uninstall: $0 --uninstall
-
-Installed version: ${VERSION}
 EOF
 }
 
@@ -606,8 +989,8 @@ uninstall_cursor() {
     log "WARNING" "Starting uninstallation process of Cursor..."
     
     # Confirm uninstallation
-    local confirm=$(ask "Are you sure you want to uninstall Cursor? (s/n)" "n")
-    if [[ $confirm != "s" ]]; then
+    local confirm=$(ask "Are you sure you want to uninstall Cursor? (y/n)" "n" "ynYN")
+    if [[ $confirm != "y" ]]; then
         log "INFO" "Uninstallation cancelled by user."
         exit 0
     fi
@@ -650,11 +1033,35 @@ show_help() {
     cat << EOF
 Usage: $0 [OPTION]
 
+Cursor IDE Installation Script v${VERSION}
+Intelligent script for Cursor IDE installation on multiple Linux distributions
+
 Options:
   -i, --install     Install Cursor (default)
   -u, --uninstall   Uninstall Cursor
   -r, --repair      Repair existing installation
   -h, --help        Show this help message
+
+Features:
+  • Automatic distribution detection (Ubuntu, Debian, Fedora, openSUSE, Arch)
+  • Multiple format support: AppImage, DEB, RPM
+  • Automatic architecture detection (x64, arm64, armv7l)
+  • Installation without root privileges (AppImage)
+  • Existing installation management
+  • Backup and rollback system
+  • Integrity verification
+
+Supported distributions:
+  • Ubuntu/Debian → DEB (recommended)
+  • Fedora/RHEL/CentOS → RPM (recommended)
+  • openSUSE → RPM (recommended)
+  • Arch Linux → AppImage (recommended)
+  • Others → AppImage (universal)
+
+Examples:
+  $0 --install          # Interactive installation
+  $0 --uninstall        # Uninstall Cursor
+  $0 --repair           # Repair corrupted installation
 
 EOF
 }
@@ -704,5 +1111,5 @@ main() {
 }
 
 # Execute the script
-mkdir -p "${APP_DIR}" || error "Falha ao criar diretório de aplicativos: ${APP_DIR}"
+mkdir -p "${APP_DIR}" || error "Failed to create application directory: ${APP_DIR}"
 main "$@"
