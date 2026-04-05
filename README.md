@@ -1,447 +1,180 @@
-# Cursor IDE - Smart Installation Script
+# Cursor IDE - Smart Linux Installer
 
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/evandrodevbr/cursorAI_install.sh)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)](https://www.linux.org/)
-[![Status](https://img.shields.io/badge/status-active-brightgreen.svg)](https://github.com/truuta/cursorAI_install.sh)
+[![Bash](https://img.shields.io/badge/language-Bash_4.0+-4EAA25?logo=gnu-bash&logoColor=white)]()
 
-An elegant and robust bash script for managing Cursor IDE on Linux, providing a smooth and interactive installation experience.
+A robust, enterprise-grade bash script designed to manage the entire lifecycle of the [Cursor IDE](https://www.cursor.com/) on Linux systems. It provides intelligent environment detection, native package management, automated desktop integration, and bulletproof safety mechanisms.
 
-## Table of Contents
+## Key Features
 
-- [Features](#features)
-- [Prerequisites](#prerequisites)
-- [Quick Installation](#quick-installation)
-- [Usage Guide](#usage-guide)
-- [Technical Architecture](#technical-architecture)
-- [FAQ](#faq)
-- [Troubleshooting](#troubleshooting)
-- [Advanced Examples](#advanced-examples)
-- [Contributing](#contributing)
-- [License](#license)
+- **Smart OS & Architecture Detection:** Automatically routes to `.deb` for Debian/Ubuntu, `.rpm` for Fedora/SUSE, and `.AppImage` for Arch/Others (supports x64, arm64, armv7l).
+- **Native Package Integration:** Interfaces directly with `apt`, `dnf`, `zypper`, `rpm`, and `dpkg` for clean, native installations and removals.
+- **Fail-Safe Upgrades:** Implements automated backups before updating, with an instant rollback mechanism if the new binary is corrupted.
+- **Ghost-Free Uninstallation:** Systematically tracks and purges all traces of the IDE, including native database registries (`dpkg -l`, `rpm -q`) and local `.desktop`/icon assets.
+- **Bandwidth-Optimized Validation:** Resolves dynamic download URLs using lightweight HTTP `HEAD` requests (`curl -I`), saving hundreds of megabytes per run.
+- **Enterprise Security Standards:**
+  - Prevents accidental execution as `root` (prevents `sudo` hijacking of user directories).
+  - Uses `mktemp -d` to prevent Symlink/Temp File Hijacking attacks.
+  - Enforces `set -euo pipefail` for strict error trapping.
 
-## Features
+---
 
-### Smart Installation
+## Tech Stack
 
-- Automatic verification of existing installations
-- Available disk space detection
-- Internet connectivity testing
-- Automatic directory structure creation
-- Shortcuts and system integrations configuration
+- **Language:** Bash (Strict POSIX compliant where applicable, requires 4.0+)
+- **Core Utilities:** `curl`, `awk`, `grep`, `df`, `mktemp`
+- **Package Managers Supported:** `apt`, `dpkg`, `dnf`, `yum`, `zypper`, `rpm`
+- **Desktop Integration:** `update-desktop-database`, `gtk-update-icon-cache`, `fusermount`
 
-### Installation Management
-
-- Automatic backup system during updates
-- Safe and complete removal
-- Corrupted installation repair
-- Support for parallel multiple installations
-- Rollback system in case of failure
-
-### User Interface
-
-- Visual progress bar during downloads
-- Colored and user-friendly interface
-- Detailed and informative logs
-- Real-time success/failure indicators
+---
 
 ## Prerequisites
 
-### Operating System
+- Any modern Linux distribution.
+- Bash 4.0 or higher.
+- `curl` installed.
+- 500MB of free disk space in the target directory (usually `~` or `~/Applications`).
+- Standard user account (the script will elevate privileges via `sudo` automatically *only* when strictly necessary for native packages).
 
-- Linux (any modern distribution)
-- Bash 4.0 or higher
-- Internet connection
-- 500MB free disk space
-- Appropriate user permissions
+---
 
-### System Dependencies
+## Getting Started
 
-- `curl` - For downloads
-- `gtk-update-icon-cache` - For icon updates
-- `update-desktop-database` - For application updates
+### 1. Download the Installer
 
-> **Note:** Most Linux distributions already have these dependencies installed by default.
-
-## Quick Installation
-
-### 1. Download the Script
+Clone the repository and make the script executable:
 
 ```bash
-git clone https://github.com/truuta/cursorAI_install.sh.git
+git clone https://github.com/evandrodevbr/cursorAI_install.sh.git
 cd cursorAI_install.sh
 chmod +x cursor-ai.sh
 ```
 
-### 2. Basic Installation
+### 2. Run the Interactive Installer
+
+Execute the script **without** sudo. The script will analyze your system and recommend the best installation path:
 
 ```bash
 ./cursor-ai.sh --install
 ```
 
-### 3. Other Options
+### 3. Alternative Commands
+
+The script provides a clean CLI interface for lifecycle management:
 
 ```bash
-./cursor-ai.sh --help      # Show help
-./cursor-ai.sh --repair    # Repair installation
-./cursor-ai.sh --uninstall # Uninstall Cursor
-```
-
-## Usage Guide
-
-### Command Line Options
-
-| Option            | Description         | Example                      |
-| ----------------- | ------------------- | ---------------------------- |
-| `-i, --install`   | Install Cursor IDE  | `./cursor-ai.sh --install`   |
-| `-u, --uninstall` | Remove Cursor IDE   | `./cursor-ai.sh --uninstall` |
-| `-r, --repair`    | Repair installation | `./cursor-ai.sh --repair`    |
-| `-h, --help`      | Show help           | `./cursor-ai.sh --help`      |
-
-### Existing Installation Management
-
-When the script detects existing installations, it offers the following options:
-
-#### **U - Update**
-
-- Creates automatic backup of current version
-- Downloads new version with integrity verification
-- Automatic rollback system in case of failure
-- Post-download validation
-
-#### **R - Remove Specific**
-
-- Removes selected installation
-- Cleans all associated files
-- Updates system cache
-- Removes application entries
-
-#### **A - Remove All**
-
-- Complete system cleanup
-- Removes all found versions
-- Cleans cache and registries
-
-#### **S - Substitute**
-
-- Keeps existing installations
-- Adds new installation in parallel
-- Preserves previous versions
-
-### Update System
-
-The script implements a robust update system:
-
-- **Download with Retry**: Up to 3 attempts with 30-second timeout
-- **Integrity Verification**: Validation of downloaded files
-- **Automatic Backup**: Preserves previous version during update
-- **Smart Rollback**: Restores previous version in case of failure
-- **Progress Bar**: Visual feedback during download
-
-## Technical Architecture
-
-### Directory Structure
-
-The script organizes files as follows:
-
-```
-${HOME}/
-├── Applications/
-│   └── cursor.AppImage          # Main executable
-├── .local/
-│   ├── bin/
-│   │   └── cursor              # Launcher script
-│   └── share/
-│       ├── applications/
-│       │   └── cursor.desktop   # Desktop file
-│       └── icons/
-│           └── cursor-icon.svg  # Application icon
-└── .cursor_log                  # Execution log
-```
-
-### System Components
-
-#### **AppImage**
-
-- Portable Cursor IDE executable
-- Downloaded from: `https://downloader.cursor.sh/linux/appImage/x64`
-- Execution permissions configured automatically
-
-#### **Launcher Script**
-
-- Wrapper script in `~/.local/bin/cursor`
-- Manages logs and command line arguments
-- Configurable sandbox mode support
-
-#### **Desktop File**
-
-- Desktop environment integration
-- Appropriate icon and categorization
-- MIME types for code files
-
-### Execution Flow
-
-1. **Preliminary Checks**
-
-   - Available disk space
-   - Internet connectivity
-   - Existing installations
-
-2. **Download and Installation**
-
-   - Download with automatic retry
-   - Integrity verification
-   - Permission configuration
-
-3. **System Integration**
-   - Desktop file creation
-   - Icon configuration
-   - System cache update
-
-## Logs and Diagnostics
-
-The script maintains detailed logs in:
-
-- `~/.cursor_log` - Execution logs
-- Colored messages in terminal
-- Real-time progress information
-
-### Log Verification
-
-```bash
-# View recent logs
-tail -f ~/.cursor_log
-
-# Check last execution
-tail -20 ~/.cursor_log
-```
-
-## Troubleshooting
-
-### Common Issues
-
-#### **Insufficient Space**
-
-```bash
-# Check available space
-df -h
-
-# Clear cache if necessary
-rm -rf /tmp/cursor_installer
-```
-
-#### **Download Failure**
-
-- The script automatically tries 3 times
-- Verifies connectivity with `ping 8.8.8.8`
-- Timeout configured for 30 seconds
-
-#### **Permission Issues**
-
-```bash
-# Check launcher permissions
-ls -l ~/.local/bin/cursor
-
-# Fix permissions if necessary
-chmod +x ~/.local/bin/cursor
-```
-
-#### **Corrupted Installation**
-
-```bash
-# Run automatic repair
+# Repair a broken installation (missing icons, deleted binaries, broken symlinks)
 ./cursor-ai.sh --repair
+
+# Safely purge Cursor IDE from the system
+./cursor-ai.sh --uninstall
+
+# Show available commands
+./cursor-ai.sh --help
 ```
-
-## FAQ
-
-### How does the automatic backup system work?
-
-The script automatically creates a backup of the current version before any update. If the new version fails, the system automatically restores the previous version, ensuring you never end up without a functional installation.
-
-### Can I have multiple versions of Cursor installed?
-
-Yes! The script supports parallel installations. You can choose the "S - Substitute" option to keep existing versions and add a new installation.
-
-### What to do if download fails repeatedly?
-
-The script automatically tries 3 times with a 30-second timeout. If it continues to fail:
-
-1. Check your internet connection
-2. Test connectivity: `ping 8.8.8.8`
-3. Check if there's a firewall blocking the download
-4. Try running the script again
-
-### How to choose between sandbox and no-sandbox mode?
-
-During installation, the script will ask about sandbox mode:
-
-- **Sandbox (recommended)**: Higher security, resource isolation
-- **No-sandbox**: Better performance, direct system access
-
-### Where are the logs stored?
-
-Logs are saved in `~/.cursor_log` and include:
-
-- Timestamp of each operation
-- Download status
-- Errors and warnings
-- Debug information
-
-### How to update manually?
-
-```bash
-# Check existing installations
-./cursor-ai.sh --install
-
-# Choose "U - Update" option when prompted
-```
-
-### Is it safe to use this script?
-
-Yes! The script implements several security measures:
-
-- Download integrity verification
-- Automatic backup before changes
-- Permission validation
-- Detailed logs for auditing
-
-### Compatibility with different Linux distributions
-
-The script is compatible with all modern Linux distributions that support:
-
-- Bash 4.0+
-- curl
-- gtk-update-icon-cache
-- update-desktop-database
-
-Tested on: Ubuntu, Debian, Fedora, Arch Linux, openSUSE.
-
-## Advanced Examples
-
-### Automation with Scripts
-
-#### Silent Installation
-
-```bash
-#!/bin/bash
-# Automatic installation without interaction
-echo "s" | ./cursor-ai.sh --install
-```
-
-#### Automatic Update Script
-
-```bash
-#!/bin/bash
-# Check and update Cursor automatically
-if [ -f ~/Applications/cursor.AppImage ]; then
-    echo "Updating Cursor..."
-    ./cursor-ai.sh --install
-fi
-```
-
-### CI/CD Integration
-
-#### GitHub Actions
-
-```yaml
-name: Install Cursor
-on: [push, pull_request]
-jobs:
-  install-cursor:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install Cursor
-        run: |
-          chmod +x cursor-ai.sh
-          ./cursor-ai.sh --install
-```
-
-### Installation on Multiple Machines
-
-#### Deploy Script
-
-```bash
-#!/bin/bash
-# Deploy to multiple machines via SSH
-for host in server1 server2 server3; do
-    scp cursor-ai.sh user@$host:/tmp/
-    ssh user@$host "chmod +x /tmp/cursor-ai.sh && /tmp/cursor-ai.sh --install"
-done
-```
-
-### Directory Customization
-
-#### Installation in Custom Directory
-
-```bash
-# During installation, when prompted:
-# Enter the desired directory (e.g., /opt/cursor)
-```
-
-### Corporate Environment Usage
-
-#### Installation with Proxy
-
-```bash
-# Configure proxy before execution
-export http_proxy=http://proxy.company.com:8080
-export https_proxy=http://proxy.company.com:8080
-./cursor-ai.sh --install
-```
-
-## Contributing
-
-### How to Contribute
-
-1. **Fork** the repository
-2. **Clone** your fork locally
-3. **Create** a branch for your feature: `git checkout -b feature/new-functionality`
-4. **Commit** your changes: `git commit -m 'Add new functionality'`
-5. **Push** to your branch: `git push origin feature/new-functionality`
-6. **Open** a Pull Request
-
-### Guidelines for Contributors
-
-- Keep code clean and documented
-- Follow existing naming conventions
-- Test your changes on different Linux distributions
-- Add tests when appropriate
-- Document new features in the README
-
-### How to Report Bugs
-
-When reporting bugs, include:
-
-- Linux distribution and version
-- Script version
-- Complete logs (`~/.cursor_log`)
-- Steps to reproduce the problem
-- Expected vs. actual behavior
-
-### Code Structure
-
-```
-cursor-ai.sh
-├── Global settings
-├── Utility functions
-├── System checks
-├── Download and installation
-├── Installation management
-└── Main function
-```
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Cursor IDE Community
-- Project contributors
-- Users who provide valuable feedback
 
 ---
 
-**Developed with ❤️ by evandrodevbr**
+## Architecture Overview
+
+### Execution Flow
+
+1. **Initialization & Safety Gates:** 
+   Enforces `set -euo pipefail`, checks `$EUID` to block raw `root` execution, and traps signals (`EXIT INT TERM HUP`) to ensure secure temporary directory cleanup.
+2. **Telemetry & Validation:** 
+   Detects OS distribution, architecture, and network connectivity. Calculates exact disk space dynamically using `df -kP`.
+3. **Package Resolution:** 
+   Probes the Cursor update API via `curl -I` to fetch the latest download URLs for AppImage, DEB, and RPM formats.
+4. **User Interaction:** 
+   Displays available packages and prompts the user for their preferred format, defaulting to the native recommendation.
+5. **Execution:** 
+   - **AppImage:** Validates FUSE availability, downloads the binary, fetches the SVG logo, and writes `.desktop` and `wrapper` scripts.
+   - **DEB/RPM:** Downloads the package and safely escalates privileges (`sudo apt-get install -y` or `sudo dnf install -y`) to handle dependency graphs without breaking the host OS.
+6. **Validation:** 
+   Checks executable permissions, file integrity, and `$PATH` visibility.
+
+### Directory Structure (AppImage / Local Install)
+
+```text
+${HOME}/
+├── Applications/
+│   └── cursor.AppImage          # Immutable binary (if AppImage selected)
+├── .local/
+│   ├── bin/
+│   │   └── cursor               # Sandbox-aware wrapper script
+│   └── share/
+│       ├── applications/
+│       │   └── cursor.desktop   # System menu entry
+│       └── icons/
+│           └── cursor-icon.svg  # Extracted vector logo
+└── .cursor_log                  # Persistent execution log
+```
+
+---
+
+## Environment Variables
+
+While the script runs interactively by default, it relies on and safely parses standard Linux environment variables:
+
+| Variable           | Description                                                                 |
+| ------------------ | --------------------------------------------------------------------------- |
+| `HOME`             | Target path for `.local` integrations and AppImage binaries.                |
+| `EUID`             | Used to prevent the script from running directly as root.                   |
+| `SUDO_USER`        | Validated alongside `EUID` to prevent sudo context hijacking.               |
+| `PATH`             | Scanned post-installation to warn the user if `~/.local/bin` is not active. |
+
+---
+
+## Troubleshooting
+
+### "FUSE is not installed" (AppImage)
+
+Modern distributions like Ubuntu 22.04+ dropped `libfuse2` by default. If you choose the AppImage format:
+```bash
+# Ubuntu/Debian
+sudo apt-get install libfuse2
+
+# Fedora
+sudo dnf install fuse
+```
+
+### Installation Verification Failed
+
+If the script fails at the validation step, it means the binary was downloaded but lacks execution permissions, or a native package failed to link in `/usr/bin/cursor`.
+**Solution:** Run the built-in repair tool:
+```bash
+./cursor-ai.sh --repair
+```
+
+### "Permission Denied" during Cleanup
+
+The script uses `mktemp -d` to sandbox downloads. If interrupted abruptly (e.g., `SIGKILL`), the OS might lock the temp folder. 
+**Solution:** The script handles standard interruptions (`Ctrl+C`), but in severe cases, manually clear `/tmp/cursor_installer.*`.
+
+---
+
+## Contributing
+
+We welcome contributions to make this installer even more robust!
+
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feat/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'feat: Add some AmazingFeature'`)
+4. Push to the Branch (`git push origin feat/AmazingFeature`)
+5. Open a Pull Request
+
+### Bash Guidelines
+- Always use `[[ ]]` over `[ ]`.
+- Maintain POSIX compliance in core utilities (e.g., `df -P`).
+- Prefix private variables with `local`.
+- Ensure new features are tested against ShellCheck.
+
+---
+
+## License
+
+Distributed under the MIT License. See `LICENSE` for more information.
+
+---
