@@ -15,11 +15,21 @@
 
 set -euo pipefail
 
+# Check for sudo execution
+if [[ $EUID -eq 0 && "${SUDO_USER:-}" != "" ]]; then
+    echo "ERROR: Please run this script as a normal user. It will ask for sudo password automatically when required." >&2
+    exit 1
+fi
+
 # Global settings and constants
 readonly VERSION="1.0.0"
-readonly TEMP_DIR="/tmp/cursor_installer"
+readonly TEMP_DIR="$(mktemp -d -t cursor_installer.XXXXXX)"
 readonly MAX_RETRIES=3
 readonly TIMEOUT=30
+
+# Initialize variables to avoid set -u errors
+SANDBOX_MODE=""
+SELECTED_FORMAT=""
 
 # Directory setup
 APP_DIR="${HOME}/Applications"
@@ -35,6 +45,17 @@ ICON_PATH="${ICON_DIR}/cursor-icon.svg"
 DESKTOP_FILE_PATH="${DESKTOP_DIR}/cursor.desktop"
 LAUNCHER_SCRIPT="${BIN_DIR}/cursor"
 
+# Helper for privilege escalation
+run_as_root() {
+    if [[ $EUID -eq 0 ]]; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        error "Root privileges required for this operation, but 'sudo' is not installed."
+    fi
+}
+
 # Function to clean temporary files
 cleanup() {
     local exit_code=$?
@@ -44,7 +65,7 @@ cleanup() {
 }
 
 # Register cleanup function
-trap cleanup EXIT
+trap cleanup EXIT INT TERM HUP
 
 # Enhanced utility functions
 log() {
@@ -87,8 +108,8 @@ ask() {
             return 0
         fi
         
-        # Validate against provided options
-        if [[ "$valid_options" =~ $answer ]]; then
+        # Validate against provided options with strict regex
+        if [[ "$answer" =~ ^[${valid_options}]$ ]]; then
             echo "$answer"
             return 0
         else
@@ -158,8 +179,11 @@ download_with_progress() {
 check_disk_space() {
     local required_space=$((500 * 1024)) # 500MB in KB
     local available_space
+    local target_dir="${APP_DIR}"
     
-    available_space=$(df -k "${APP_DIR}" | awk 'NR==2 {print $4}')
+    [[ ! -d "$target_dir" ]] && target_dir="${HOME}"
+    
+    available_space=$(df -kP "$target_dir" | awk 'NR==2 {print $4}')
     
     if [[ $available_space -lt $required_space ]]; then
         error "Insufficient disk space. Required: 500MB, Available: $((available_space / 1024))MB"
@@ -268,8 +292,8 @@ get_download_url() {
     
     log "INFO" "Getting download URL for $format ($arch)..." >&2
     
-    # Get the redirect URL
-    final_url=$(curl -sI "$api_url" 2>/dev/null | grep -i "location:" | cut -d' ' -f2 | tr -d '\r\n')
+    # Get the redirect URL safely
+    final_url=$(curl -s -L -I -w "%{url_effective}" -o /dev/null "$api_url" 2>/dev/null)
     
     if [[ -n "$final_url" ]]; then
         log "SUCCESS" "URL obtained: $final_url" >&2
@@ -299,7 +323,7 @@ list_available_packages() {
         url=$(get_download_url "$format" "$arch")
         if [[ -n "$url" ]]; then
             # Extract version from filename
-            version=$(echo "$url" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1)
+            version=$(echo "$url" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1 || echo "unknown")
             
             # Get file size
             log "INFO" "Getting file size for $format package..."
@@ -339,9 +363,6 @@ list_available_packages() {
     
     echo "└─────────────────────────────────────────────────────────────┘"
     echo ""
-    
-    # Export packages for selection
-    export AVAILABLE_PACKAGES=("${packages[@]}")
 }
 
 # Function to check internet connection
@@ -358,6 +379,22 @@ remove_specific_installation() {
     
     log "INFO" "Removing installation: $install_path"
     
+    # Check if it's a native path (like /usr/bin/cursor)
+    if [[ "$install_path" == "/usr/bin/cursor" || "$install_path" == "/usr/local/bin/cursor" ]]; then
+        if command -v dpkg >/dev/null 2>&1 && dpkg -l cursor 2>/dev/null | grep -q "^ii"; then
+            run_as_root apt-get remove -y cursor || run_as_root dpkg -r cursor
+        elif command -v rpm >/dev/null 2>&1 && rpm -q cursor >/dev/null 2>&1; then
+            if command -v dnf >/dev/null 2>&1; then
+                run_as_root dnf remove -y cursor
+            else
+                run_as_root rpm -e cursor
+            fi
+        else
+            run_as_root rm -f "$install_path"
+        fi
+        return 0
+    fi
+    
     # Remove the main file
     if [[ -f "$install_path" ]]; then
         if rm -f "$install_path"; then
@@ -371,9 +408,9 @@ remove_specific_installation() {
     # Remove associated files if it's a complete installation
     if [[ "$install_path" == *"cursor.AppImage" ]]; then
         local associated_files=(
-            "${install_path%/*}/cursor-icon.svg"
-            "${HOME}/.local/share/applications/cursor.desktop"
-            "${HOME}/.local/bin/cursor"
+            "${ICON_DIR}/cursor-icon.svg"
+            "${DESKTOP_DIR}/cursor.desktop"
+            "${BIN_DIR}/cursor"
             "${HOME}/.cursor_log"
         )
         
@@ -389,8 +426,12 @@ remove_specific_installation() {
         done
         
         # Update system cache
-        update-desktop-database "${DESKTOP_DIR}" 2>/dev/null || true
-        gtk-update-icon-cache -f -t ~/.local/share/icons 2>/dev/null || true
+        if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database "${DESKTOP_DIR}" 2>/dev/null || true
+        fi
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            gtk-update-icon-cache -f -t ~/.local/share/icons 2>/dev/null || true
+        fi
     fi
     
     if [[ "$success" = true ]]; then
@@ -423,7 +464,11 @@ update_cursor_appimage() {
     
     # Download new version
     log "INFO" "Downloading new Cursor version..."
-    if download_with_progress "${DOWNLOAD_URL}" "$install_path" "new Cursor version"; then
+    local download_url
+    if ! download_url=$(get_download_url "appimage" "${DETECTED_ARCH:-x64}"); then
+        log "ERROR" "Failed to get download URL for AppImage update"
+        success=false
+    elif download_with_progress "$download_url" "$install_path" "new Cursor version"; then
         chmod +x "$install_path"
         log "SUCCESS" "✓ New version downloaded and configured"
         
@@ -459,12 +504,12 @@ check_existing_installation() {
         "${HOME}/Applications/cursor.AppImage"
         "${HOME}/.local/bin/cursor"
         "/usr/local/bin/cursor"
+        "/usr/bin/cursor"
         "/opt/cursor/cursor.AppImage"
     )
     
     local found=false
     local installations=()
-    local valid_paths=()
     
     log "INFO" "Checking existing Cursor installations..."
     
@@ -473,7 +518,6 @@ check_existing_installation() {
         if [[ -f "$path" ]]; then
             found=true
             installations+=("$path")
-            valid_paths+=("$path")
         fi
     done
     
@@ -602,6 +646,19 @@ EOF
 repair_installation() {
     log "INFO" "Starting repair of Cursor installation..."
     
+    # If the user has a native installation, reinstalling the package is best
+    if command -v cursor >/dev/null 2>&1 && ! [[ "$(command -v cursor)" == "${HOME}/.local/bin/cursor" ]]; then
+        log "WARNING" "Detected a native package installation (DEB/RPM)."
+        log "INFO" "It is recommended to reinstall using standard format selection."
+        local answer=$(ask "Do you want to reinstall the native package? (y/n)" "y" "ynYN")
+        if [[ "$answer" == "y" ]]; then
+            install_cursor
+        else
+            log "INFO" "Repair cancelled."
+        fi
+        return 0
+    fi
+    
     # Verify file integrity
     local files_to_check=(
         "${APPIMAGE_PATH}"
@@ -625,25 +682,42 @@ repair_installation() {
     if [[ "$needs_repair" = true ]]; then
         log "INFO" "Starting repair process..."
         
+        # Detect distribution to ensure we know arch
+        detect_distribution
+        
+        # Ensure directories exist
+        mkdir -p "${APP_DIR}" "${ICON_DIR}" "${DESKTOP_DIR}" "${BIN_DIR}"
+        
         # Download missing files
         if [[ ! -f "${APPIMAGE_PATH}" ]]; then
             local download_url
-            download_url=$(get_download_url "appimage" "x64")
-            download_with_progress "$download_url" "${APPIMAGE_PATH}" "Cursor AppImage"
-            chmod +x "${APPIMAGE_PATH}"
+            download_url=$(get_download_url "appimage" "${DETECTED_ARCH:-x64}")
+            if [[ -n "$download_url" ]]; then
+                download_with_progress "$download_url" "${APPIMAGE_PATH}" "Cursor AppImage"
+                chmod +x "${APPIMAGE_PATH}"
+            else
+                error "Failed to get download URL for AppImage repair."
+            fi
         fi
         
         if [[ ! -f "${ICON_PATH}" ]]; then
             download_with_progress "${ICON_DOWNLOAD_URL}" "${ICON_PATH}" "Cursor icon"
         fi
         
+        # Initialize Sandbox preference
+        SANDBOX_MODE=$(ask "Do you want to run Cursor with sandbox? (y/n)" "y" "ynYN")
+        
         # Recreate configuration files
         create_desktop_file
         create_launcher_script
         
         # Update system cache
-        update-desktop-database "${DESKTOP_DIR}" 2>/dev/null || true
-        gtk-update-icon-cache -f -t ~/.local/share/icons 2>/dev/null || true
+        if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database "${DESKTOP_DIR}" 2>/dev/null || true
+        fi
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            gtk-update-icon-cache -f -t ~/.local/share/icons 2>/dev/null || true
+        fi
         
         log "SUCCESS" "✨ Repair completed successfully! ✨"
     else
@@ -674,13 +748,18 @@ EOF
 # Function to create launcher script
 create_launcher_script() {
     log "INFO" "Creating launcher script..."
+    local sandbox_flag=""
+    if [[ "$SANDBOX_MODE" == "n" ]]; then
+        sandbox_flag="--no-sandbox"
+    fi
+
     cat > "${LAUNCHER_SCRIPT}" << EOF
 #!/bin/bash
 
 # Configurations
 CURSOR_APP="${APPIMAGE_PATH}"
 LOG_FILE="\${HOME}/.cursor_log"
-SANDBOX_FLAG="$([ "$SANDBOX_MODE" = "s" ] && echo "--no-sandbox" || echo "")"
+SANDBOX_FLAG="${sandbox_flag}"
 
 # Logging function
 log_msg() {
@@ -706,12 +785,21 @@ EOF
     log "SUCCESS" "Launcher script created in: ${LAUNCHER_SCRIPT}"
 }
 
+# Function to check FUSE for AppImage
+check_fuse() {
+    if ! command -v fusermount >/dev/null 2>&1 && ! command -v fusermount3 >/dev/null 2>&1; then
+        log "WARNING" "FUSE is not installed. AppImages require FUSE to run."
+        log "WARNING" "You may need to install 'libfuse2' (Ubuntu < 22.04), 'fuse' or 'fuse3'."
+    fi
+}
+
 # Function to install AppImage
 install_appimage() {
     local download_url=$1
     local appimage_path=$2
     
     log "INFO" "Installing Cursor AppImage..."
+    check_fuse
     
     # Download AppImage
     download_with_progress "$download_url" "$appimage_path" "Cursor AppImage"
@@ -738,25 +826,18 @@ install_deb() {
     # Download DEB package
     download_with_progress "$download_url" "$temp_deb" "Cursor DEB package"
     
-    # Check if sudo is required
-    if [[ $EUID -ne 0 ]]; then
-        log "INFO" "Installing DEB package (may require sudo password)..."
-        if sudo dpkg -i "$temp_deb"; then
+    log "INFO" "Installing DEB package (may require root privileges)..."
+    if command -v apt-get >/dev/null 2>&1; then
+        if run_as_root apt-get update && run_as_root apt-get install -y "$temp_deb"; then
             log "SUCCESS" "✓ DEB package installed successfully!"
         else
-            log "WARNING" "dpkg installation failed, trying apt..."
-            sudo apt-get update && sudo apt-get install -f
-            if sudo dpkg -i "$temp_deb"; then
-                log "SUCCESS" "✓ DEB package installed successfully!"
-            else
-                error "Failed to install DEB package"
-            fi
+            error "Failed to install DEB package via apt"
         fi
     else
-        if dpkg -i "$temp_deb"; then
+        if run_as_root dpkg -i "$temp_deb"; then
             log "SUCCESS" "✓ DEB package installed successfully!"
         else
-            error "Failed to install DEB package"
+            error "Failed to install DEB package via dpkg"
         fi
     fi
     
@@ -774,32 +855,23 @@ install_rpm() {
     # Download RPM package
     download_with_progress "$download_url" "$temp_rpm" "Cursor RPM package"
     
-    # Check if sudo is required
-    if [[ $EUID -ne 0 ]]; then
-        log "INFO" "Installing RPM package (may require sudo password)..."
-        
-        # Try different package managers
-        if command -v dnf >/dev/null 2>&1; then
-            sudo dnf install -y "$temp_rpm"
-        elif command -v yum >/dev/null 2>&1; then
-            sudo yum install -y "$temp_rpm"
-        elif command -v zypper >/dev/null 2>&1; then
-            sudo zypper install -y "$temp_rpm"
-        else
-            sudo rpm -i "$temp_rpm"
-        fi
-        
-        if [[ $? -eq 0 ]]; then
-            log "SUCCESS" "✓ RPM package installed successfully!"
-        else
-            error "Failed to install RPM package"
-        fi
+    log "INFO" "Installing RPM package (may require root privileges)..."
+    
+    # Try different package managers
+    if command -v dnf >/dev/null 2>&1; then
+        run_as_root dnf install -y "$temp_rpm"
+    elif command -v yum >/dev/null 2>&1; then
+        run_as_root yum install -y "$temp_rpm"
+    elif command -v zypper >/dev/null 2>&1; then
+        run_as_root zypper install -y "$temp_rpm"
     else
-        if rpm -i "$temp_rpm"; then
-            log "SUCCESS" "✓ RPM package installed successfully!"
-        else
-            error "Failed to install RPM package"
-        fi
+        run_as_root rpm -i "$temp_rpm"
+    fi
+    
+    if [[ $? -eq 0 ]]; then
+        log "SUCCESS" "✓ RPM package installed successfully!"
+    else
+        error "Failed to install RPM package"
     fi
     
     # Clean up
@@ -809,7 +881,6 @@ install_rpm() {
 # Function to select package format
 select_package_format() {
     local choice=""
-    local valid_formats=("appimage" "deb" "rpm")
     
     echo ""
     echo "┌─────────────────────────────────────────────────────────────┐"
@@ -872,16 +943,14 @@ install_cursor() {
     
     # List available packages and get user selection
     list_available_packages
-    local selected_format
     select_package_format
-    selected_format="$SELECTED_FORMAT"
     
     # Validate package manager for selected format
-    if ! check_package_manager "$selected_format"; then
-        log "WARNING" "Package manager for $selected_format not available"
+    if ! check_package_manager "$SELECTED_FORMAT"; then
+        log "WARNING" "Package manager for $SELECTED_FORMAT not available"
         local fallback=$(ask "Do you want to use AppImage as alternative? (y/n)" "y" "ynYN")
         if [[ "${fallback,,}" = "y" ]]; then
-            selected_format="appimage"
+            SELECTED_FORMAT="appimage"
             log "INFO" "Switching to AppImage format"
         else
             error "Installation cancelled"
@@ -889,18 +958,18 @@ install_cursor() {
     fi
     
     # Get download URL for selected format
-    log "INFO" "Getting download URL for selected format: $selected_format"
+    log "INFO" "Getting download URL for selected format: $SELECTED_FORMAT"
     local download_url
-    download_url=$(get_download_url "$selected_format" "$DETECTED_ARCH")
+    download_url=$(get_download_url "$SELECTED_FORMAT" "$DETECTED_ARCH")
     
     if [[ -z "$download_url" ]]; then
-        error "Failed to get download URL for $selected_format"
+        error "Failed to get download URL for $SELECTED_FORMAT"
     fi
     
     # Configure installation paths (only for AppImage)
-    if [[ "$selected_format" = "appimage" ]]; then
+    if [[ "$SELECTED_FORMAT" = "appimage" ]]; then
         APP_DIR=$(ask "Enter the application installation directory" "${HOME}/Applications")
-        SANDBOX_MODE=$(ask "Do you want to run Cursor with sandbox?" "y" "ynYN")
+        SANDBOX_MODE=$(ask "Do you want to run Cursor with sandbox? (y/n)" "y" "ynYN")
         
         # Create necessary directories
         mkdir -p "${APP_DIR}" "${ICON_DIR}" "${DESKTOP_DIR}" "${BIN_DIR}" || error "Failed to create directories"
@@ -911,7 +980,7 @@ install_cursor() {
     fi
     
     # Install based on format
-    case "$selected_format" in
+    case "$SELECTED_FORMAT" in
         "appimage")
             install_appimage "$download_url" "$APPIMAGE_PATH"
             ;;
@@ -936,16 +1005,25 @@ verify_installation() {
     
     log "INFO" "Verifying installation..."
     
-    # Verify essential files
-    for file in "${APPIMAGE_PATH}" "${ICON_PATH}" "${DESKTOP_FILE_PATH}" "${LAUNCHER_SCRIPT}"; do
-        if [[ ! -f "$file" ]]; then
-            log "ERROR" "Missing file: $file"
-            verification_failed=true
-        elif [[ ! -x "$file" && "${file##*.}" != "svg" ]]; then
-            log "ERROR" "Incorrect permissions: $file"
+    if [[ "$SELECTED_FORMAT" == "deb" || "$SELECTED_FORMAT" == "rpm" ]]; then
+        if command -v cursor >/dev/null 2>&1 || [[ -x "/usr/bin/cursor" || -x "/usr/local/bin/cursor" ]]; then
+            log "SUCCESS" "✓ Native package ($SELECTED_FORMAT) installed successfully."
+        else
+            log "ERROR" "Native package installed but 'cursor' binary not found in PATH."
             verification_failed=true
         fi
-    done
+    else
+        # Verify essential files for AppImage
+        for file in "${APPIMAGE_PATH}" "${ICON_PATH}" "${DESKTOP_FILE_PATH}" "${LAUNCHER_SCRIPT}"; do
+            if [[ ! -f "$file" ]]; then
+                log "ERROR" "Missing file: $file"
+                verification_failed=true
+            elif [[ ! -x "$file" && "${file##*.}" != "svg" ]]; then
+                log "ERROR" "Incorrect permissions: $file"
+                verification_failed=true
+            fi
+        done
+    fi
     
     if [[ "$verification_failed" = true ]]; then
         error "Installation verification failed. Please execute repair."
@@ -982,6 +1060,11 @@ show_post_install_message() {
 └─────────────────────────────────────────────────────────────┘
 
 EOF
+
+    if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+        log "WARNING" "The directory $BIN_DIR is not in your PATH."
+        log "WARNING" "You may need to add it to your ~/.bashrc or ~/.zshrc to run 'cursor' from the terminal."
+    fi
 }
 
 # Function to uninstall the Cursor
@@ -995,6 +1078,23 @@ uninstall_cursor() {
         exit 0
     fi
     
+    # Try native removal first if cursor exists and is a native package
+    if command -v dpkg >/dev/null 2>&1 && dpkg -l cursor 2>/dev/null | grep -q "^ii"; then
+        log "INFO" "Removing Cursor DEB package..."
+        run_as_root apt-get remove -y cursor || run_as_root dpkg -r cursor
+    elif command -v rpm >/dev/null 2>&1 && rpm -q cursor >/dev/null 2>&1; then
+        log "INFO" "Removing Cursor RPM package..."
+        if command -v dnf >/dev/null 2>&1; then
+            run_as_root dnf remove -y cursor
+        elif command -v yum >/dev/null 2>&1; then
+            run_as_root yum remove -y cursor
+        elif command -v zypper >/dev/null 2>&1; then
+            run_as_root zypper remove -y cursor
+        else
+            run_as_root rpm -e cursor
+        fi
+    fi
+
     local files_to_remove=(
         "${APPIMAGE_PATH}"
         "${ICON_PATH}"
@@ -1018,8 +1118,12 @@ uninstall_cursor() {
     done
     
     # Update system cache
-    update-desktop-database "${DESKTOP_DIR}" 2>/dev/null || true
-    gtk-update-icon-cache -f -t ~/.local/share/icons 2>/dev/null || true
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "${DESKTOP_DIR}" 2>/dev/null || true
+    fi
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -f -t ~/.local/share/icons 2>/dev/null || true
+    fi
     
     if [[ "$success" = true ]]; then
         log "SUCCESS" "✨ Cursor uninstalled successfully! ✨"
