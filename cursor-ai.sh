@@ -30,6 +30,7 @@ readonly TIMEOUT=30
 # Initialize variables to avoid set -u errors
 SANDBOX_MODE=""
 SELECTED_FORMAT=""
+INSTALLED_CURSOR_VERSION=""
 
 # Directory setup
 APP_DIR="${HOME}/Applications"
@@ -100,13 +101,15 @@ ask() {
         printf ": " >&2
         read -r answer </dev/tty
         answer=${answer:-$default}
-        answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')
         
-        # If no specific validation, accept any input
+        # Free-form answers (e.g. installation paths) must be preserved verbatim
         if [[ -z "$valid_options" ]]; then
             echo "$answer"
             return 0
         fi
+        
+        # Case-fold only when validating against a fixed option list
+        answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')
         
         # Validate against provided options with strict regex
         if [[ "$answer" =~ ^[${valid_options}]$ ]]; then
@@ -367,9 +370,15 @@ list_available_packages() {
 
 # Function to check internet connection
 check_internet_connection() {
-    if ! ping -c 1 8.8.8.8 &>/dev/null; then
-        error "No internet connection. Please check your connection and try again."
+    # curl is a hard requirement of this script, ping is not, and many networks
+    # drop ICMP. Only fail when neither check can reach the network.
+    if curl -sI --connect-timeout "$TIMEOUT" https://api2.cursor.sh >/dev/null 2>&1; then
+        return 0
     fi
+    if command -v ping >/dev/null 2>&1 && ping -c 1 8.8.8.8 &>/dev/null; then
+        return 0
+    fi
+    error "No internet connection. Please check your connection and try again."
 }
 
 # Function to remove a specific installation
@@ -436,11 +445,11 @@ remove_specific_installation() {
     
     if [[ "$success" = true ]]; then
         log "SUCCESS" "✨ Installation removed successfully! ✨"
+        return 0
     else
         log "WARNING" "Removal completed with some errors. Please check above messages."
+        return 1
     fi
-    
-    return $success
 }
 
 # Function to update the Cursor AppImage
@@ -502,6 +511,8 @@ update_cursor_appimage() {
 check_existing_installation() {
     local possible_paths=(
         "${HOME}/Applications/cursor.AppImage"
+        # Legacy path written by versions where ask() lowercased the answer
+        "${HOME}/applications/cursor.AppImage"
         "${HOME}/.local/bin/cursor"
         "/usr/local/bin/cursor"
         "/usr/bin/cursor"
@@ -772,10 +783,10 @@ run_cursor() {
     
     if [ "\$target" = "." ] || [ -z "\$target" ]; then
         log_msg "Starting Cursor in current directory: \$(pwd)"
-        nohup "\$CURSOR_APP" \$SANDBOX_FLAG "\$(pwd)" > "\$LOG_FILE" 2>&1 &
+        nohup "\$CURSOR_APP" \$SANDBOX_FLAG "\$(pwd)" >> "\$LOG_FILE" 2>&1 &
     else
         log_msg "Starting Cursor with arguments: \$*"
-        nohup "\$CURSOR_APP" \$SANDBOX_FLAG "\$@" > "\$LOG_FILE" 2>&1 &
+        nohup "\$CURSOR_APP" \$SANDBOX_FLAG "\$@" >> "\$LOG_FILE" 2>&1 &
     fi
 }
 
@@ -933,7 +944,7 @@ select_package_format() {
 
 # Installation function
 install_cursor() {
-    log "INFO" "Starting Cursor IDE v${VERSION} installation..."
+    log "INFO" "Starting Cursor IDE installation (installer v${VERSION})..."
     
     # Preliminary checks
     detect_distribution
@@ -965,6 +976,9 @@ install_cursor() {
     if [[ -z "$download_url" ]]; then
         error "Failed to get download URL for $SELECTED_FORMAT"
     fi
+    
+    # Version of the package being installed (the download URL carries it)
+    INSTALLED_CURSOR_VERSION=$(printf '%s' "$download_url" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
     
     # Configure installation paths (only for AppImage)
     if [[ "$SELECTED_FORMAT" = "appimage" ]]; then
@@ -1053,7 +1067,8 @@ show_post_install_message() {
 │ • To repair installation: $0 --repair                       │
 │ • To uninstall: $0 --uninstall                              │
 │                                                             │
-│ Installed version: ${VERSION}                              │
+│ Installed Cursor version: ${INSTALLED_CURSOR_VERSION:-unknown}             │
+│ Installer version: ${VERSION}                              │
 │ Distribution: $DETECTED_DISTRO                             │
 │ Architecture: $DETECTED_ARCH                               │
 │                                                             │
@@ -1097,6 +1112,8 @@ uninstall_cursor() {
 
     local files_to_remove=(
         "${APPIMAGE_PATH}"
+        # Legacy path written by versions where ask() lowercased the answer
+        "${HOME}/applications/cursor.AppImage"
         "${ICON_PATH}"
         "${DESKTOP_FILE_PATH}"
         "${LAUNCHER_SCRIPT}"
