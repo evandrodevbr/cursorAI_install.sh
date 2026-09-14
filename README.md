@@ -1,180 +1,181 @@
-# Cursor IDE - Smart Linux Installer
+# Cursor IDE Installer for Linux
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/evandrodevbr/cursorAI_install.sh)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)](https://www.linux.org/)
-[![Bash](https://img.shields.io/badge/language-Bash_4.0+-4EAA25?logo=gnu-bash&logoColor=white)]()
+**Interactive Bash script that installs, repairs and removes the [Cursor IDE](https://www.cursor.com/) on Linux**, choosing between AppImage, DEB and RPM according to the detected distribution and CPU architecture.
 
-A robust, enterprise-grade bash script designed to manage the entire lifecycle of the [Cursor IDE](https://www.cursor.com/) on Linux systems. It provides intelligent environment detection, native package management, automated desktop integration, and bulletproof safety mechanisms.
+![Bash](https://img.shields.io/badge/bash-4.0%2B-4EAA25?logo=gnu-bash&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Linux-FCC624?logo=linux&logoColor=black)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-## Key Features
+## About
 
-- **Smart OS & Architecture Detection:** Automatically routes to `.deb` for Debian/Ubuntu, `.rpm` for Fedora/SUSE, and `.AppImage` for Arch/Others (supports x64, arm64, armv7l).
-- **Native Package Integration:** Interfaces directly with `apt`, `dnf`, `zypper`, `rpm`, and `dpkg` for clean, native installations and removals.
-- **Fail-Safe Upgrades:** Implements automated backups before updating, with an instant rollback mechanism if the new binary is corrupted.
-- **Ghost-Free Uninstallation:** Systematically tracks and purges all traces of the IDE, including native database registries (`dpkg -l`, `rpm -q`) and local `.desktop`/icon assets.
-- **Bandwidth-Optimized Validation:** Resolves dynamic download URLs using lightweight HTTP `HEAD` requests (`curl -I`), saving hundreds of megabytes per run.
-- **Enterprise Security Standards:**
-  - Prevents accidental execution as `root` (prevents `sudo` hijacking of user directories).
-  - Uses `mktemp -d` to prevent Symlink/Temp File Hijacking attacks.
-  - Enforces `set -euo pipefail` for strict error trapping.
+Installing Cursor on Linux means picking the right artifact for your distribution and architecture, wiring up a desktop entry and a launcher, and then remembering where all those files went when you want to upgrade or remove the app. `cursor-ai.sh` handles that lifecycle:
 
----
+- detects the distribution through `/etc/os-release` and the architecture through `uname -m`, and recommends the matching package format;
+- resolves the current download URL from Cursor's update API (the AppImage, DEB and RPM builds of the same release), so the script never hardcodes a version;
+- installs a user-level AppImage without root privileges and integrates it with your desktop, or downloads a DEB/RPM and hands it to your native package manager;
+- repairs a broken AppImage setup (missing icon, desktop entry or launcher) and removes the installation afterwards.
 
-## Tech Stack
+It runs as a normal user. Root is only requested, through `sudo`, when you pick a DEB or RPM package.
 
-- **Language:** Bash (Strict POSIX compliant where applicable, requires 4.0+)
-- **Core Utilities:** `curl`, `awk`, `grep`, `df`, `mktemp`
-- **Package Managers Supported:** `apt`, `dpkg`, `dnf`, `yum`, `zypper`, `rpm`
-- **Desktop Integration:** `update-desktop-database`, `gtk-update-icon-cache`, `fusermount`
+## How it works
 
----
+```text
+./cursor-ai.sh --install
+        |
+        |-- detect_distribution()          /etc/os-release + uname -m  ->  deb | rpm | appimage
+        |-- check_disk_space()              df -kP                       (500 MB free)
+        |-- check_internet_connection()     curl HEAD to the update API
+        |-- check_existing_installation()   known install paths, then a prompt
+        |-- list_available_packages()       HEAD on api2.cursor.sh -> version + size of each build
+        |-- select_package_format()         prompt (default = the recommendation for your distro)
+        |
+        `-- install_appimage() / install_deb() / install_rpm()
+                    |                             |
+                    |                             `-- sudo apt-get / dpkg / dnf / yum / zypper / rpm
+                    `-- ~/Applications/cursor.AppImage
+                        ~/.local/bin/cursor                  (launcher)
+                        ~/.local/share/applications/cursor.desktop
+                        ~/.local/share/icons/cursor-icon.svg
+```
 
-## Prerequisites
+The download URL is resolved with a lightweight `curl -I` against `https://api2.cursor.sh/updates/download/golden/linux-<arch>-<format>/cursor/`, which answers with a redirect to the real artifact. The script follows it and only then downloads the file.
 
-- Any modern Linux distribution.
-- Bash 4.0 or higher.
-- `curl` installed.
-- 500MB of free disk space in the target directory (usually `~` or `~/Applications`).
-- Standard user account (the script will elevate privileges via `sudo` automatically *only* when strictly necessary for native packages).
+## Stack
 
----
+| Layer | Choice |
+|---|---|
+| Language | Bash 4+ (single script, `set -euo pipefail`) |
+| HTTP | `curl` (URL resolution, downloads, connectivity check) |
+| Package sources | Cursor update API (`api2.cursor.sh`) |
+| Install methods | AppImage (user level), DEB (`apt-get`/`dpkg`), RPM (`dnf`/`yum`/`zypper`/`rpm`) |
+| Desktop integration | `.desktop` entry, SVG icon, launcher in `~/.local/bin` |
+| License | MIT |
 
-## Getting Started
+## Requirements
 
-### 1. Download the Installer
+- Linux with Bash 4.0 or newer.
+- `curl` installed (every network call goes through it).
+- An interactive terminal: all questions are read from `/dev/tty`, so the script cannot be driven from a pipe or from CI.
+- About 500 MB of free space in the target directory (`~/Applications`, or `$HOME` while it does not exist).
+- `sudo` available and working, only if you choose the DEB or RPM format.
+- Optional, used when present: `update-desktop-database`, `gtk-update-icon-cache`, `fusermount`/`fusermount3` (missing FUSE produces a warning, since AppImages need it).
 
-Clone the repository and make the script executable:
+## Quick start
 
 ```bash
 git clone https://github.com/evandrodevbr/cursorAI_install.sh.git
 cd cursorAI_install.sh
 chmod +x cursor-ai.sh
-```
 
-### 2. Run the Interactive Installer
-
-Execute the script **without** sudo. The script will analyze your system and recommend the best installation path:
-
-```bash
 ./cursor-ai.sh --install
 ```
 
-### 3. Alternative Commands
+Run it as your normal user, never with `sudo`: the script refuses to run inside a sudo session on purpose, and asks for the password itself when a native package needs root.
 
-The script provides a clean CLI interface for lifecycle management:
+The interactive install asks three questions:
+
+| Prompt | Default | Notes |
+|---|---|---|
+| Package format (1-3) | the format recommended for your distribution | `1` AppImage, `2` DEB, `3` RPM |
+| Application installation directory | `~/Applications` | only asked for AppImage (the answer is kept verbatim) |
+| Run Cursor with sandbox? (y/n) | `y` | answering `n` writes `--no-sandbox` into the launcher |
+
+When it finishes, the script prints the installed Cursor version, the installer version, and warns if `~/.local/bin` is not in your `PATH`.
+
+## Usage
 
 ```bash
-# Repair a broken installation (missing icons, deleted binaries, broken symlinks)
-./cursor-ai.sh --repair
-
-# Safely purge Cursor IDE from the system
-./cursor-ai.sh --uninstall
-
-# Show available commands
-./cursor-ai.sh --help
+./cursor-ai.sh --install      # install (this is also the default when no argument is given)
+./cursor-ai.sh --repair       # recreate missing AppImage files (binary, icon, .desktop, launcher)
+./cursor-ai.sh --uninstall    # remove the installation, asking for confirmation first
+./cursor-ai.sh --help         # list the flags and the supported distributions
 ```
 
----
+Short flags `-i`, `-r`, `-u` and `-h` are accepted as well. An unknown flag prints the help and exits with status 1.
 
-## Architecture Overview
+### What an AppImage install creates
 
-### Execution Flow
+| Path | Content |
+|---|---|
+| `~/Applications/cursor.AppImage` | the downloaded, executable AppImage |
+| `~/.local/bin/cursor` | launcher that forwards arguments and appends its output to the log |
+| `~/.local/share/applications/cursor.desktop` | desktop entry (menu entry, `cursor://` MIME handler) |
+| `~/.local/share/icons/cursor-icon.svg` | icon fetched from cursor.com |
+| `~/.cursor_log` | launcher log (timestamped start line plus the app output) |
 
-1. **Initialization & Safety Gates:** 
-   Enforces `set -euo pipefail`, checks `$EUID` to block raw `root` execution, and traps signals (`EXIT INT TERM HUP`) to ensure secure temporary directory cleanup.
-2. **Telemetry & Validation:** 
-   Detects OS distribution, architecture, and network connectivity. Calculates exact disk space dynamically using `df -kP`.
-3. **Package Resolution:** 
-   Probes the Cursor update API via `curl -I` to fetch the latest download URLs for AppImage, DEB, and RPM formats.
-4. **User Interaction:** 
-   Displays available packages and prompts the user for their preferred format, defaulting to the native recommendation.
-5. **Execution:** 
-   - **AppImage:** Validates FUSE availability, downloads the binary, fetches the SVG logo, and writes `.desktop` and `wrapper` scripts.
-   - **DEB/RPM:** Downloads the package and safely escalates privileges (`sudo apt-get install -y` or `sudo dnf install -y`) to handle dependency graphs without breaking the host OS.
-6. **Validation:** 
-   Checks executable permissions, file integrity, and `$PATH` visibility.
+### Existing installations
 
-### Directory Structure (AppImage / Local Install)
+When an installation is already present, the script lists every path it knows about (`~/Applications/cursor.AppImage`, `~/applications/cursor.AppImage`, `~/.local/bin/cursor`, `/usr/local/bin/cursor`, `/usr/bin/cursor`, `/opt/cursor/cursor.AppImage`) and offers to update it, remove one, remove all, keep it, or cancel:
+
+- **Update** works for AppImage installs only: it renames the current file to `.backup`, downloads the newest release, and restores the backup if the new file looks corrupted.
+- **Remove** deletes the selected path, and for an AppImage also the icon, desktop entry, launcher and log.
+- DEB and RPM are removed through the native package manager instead.
+
+`--repair` checks the four AppImage files, downloads or recreates whatever is missing, and reports `All files are intact, no repair needed.` when there is nothing to do. With a native package installed it offers to reinstall through the normal format selection.
+
+## Deploy
+
+There is nothing to build: the script is the artifact. On another machine, copy the single file and run it as the user who will use Cursor:
+
+```bash
+scp cursor-ai.sh user@host:~/
+ssh -t user@host 'chmod +x ~/cursor-ai.sh && ~/cursor-ai.sh --install'
+```
+
+It writes only inside `$HOME` for AppImage installs; the DEB/RPM paths are the only ones that escalate with `sudo`.
+
+## Project structure
 
 ```text
-${HOME}/
-├── Applications/
-│   └── cursor.AppImage          # Immutable binary (if AppImage selected)
-├── .local/
-│   ├── bin/
-│   │   └── cursor               # Sandbox-aware wrapper script
-│   └── share/
-│       ├── applications/
-│       │   └── cursor.desktop   # System menu entry
-│       └── icons/
-│           └── cursor-icon.svg  # Extracted vector logo
-└── .cursor_log                  # Persistent execution log
+.
+├── cursor-ai.sh   the whole installer: detection, download, install, repair, uninstall
+├── README.md
+└── LICENSE        MIT
 ```
 
----
+`cursor-ai.sh` is a single file; the main entry points are `detect_distribution`, `list_available_packages`, `install_appimage` / `install_deb` / `install_rpm`, `repair_installation`, `update_cursor_appimage` and `uninstall_cursor`, with helpers such as `ask`, `download_with_progress` and `log`.
 
-## Environment Variables
+## Verification
 
-While the script runs interactively by default, it relies on and safely parses standard Linux environment variables:
+This repository has **no automated test suite and no CI**.
 
-| Variable           | Description                                                                 |
-| ------------------ | --------------------------------------------------------------------------- |
-| `HOME`             | Target path for `.local` integrations and AppImage binaries.                |
-| `EUID`             | Used to prevent the script from running directly as root.                   |
-| `SUDO_USER`        | Validated alongside `EUID` to prevent sudo context hijacking.               |
-| `PATH`             | Scanned post-installation to warn the user if `~/.local/bin` is not active. |
+| Check | Result |
+|---|---|
+| `bash -n cursor-ai.sh` | exit 0, no syntax errors |
+| `shellcheck` 0.10.0 | 0 errors (8 style warnings SC2155, 2 notes) |
+| `./cursor-ai.sh --help` | exit 0, prints the flag reference |
+| `./cursor-ai.sh --bogus` | exit 1, `Unknown option` |
+| Full AppImage install into a throwaway `$HOME` | exit 0, the four files created, version resolved as Cursor 3.20.17 |
+| Installed launcher run with `--appimage-version` | AppImage runtime answered; the log file received both the timestamp line and the app output |
+| `--repair` with everything in place | `All files are intact, no repair needed.` (exit 0) |
+| `--repair` after deleting the icon and the desktop entry | both recreated, exit 0 |
+| `--uninstall` | every installed file removed, exit 0 |
 
----
+To repeat the smoke test:
 
-## Troubleshooting
-
-### "FUSE is not installed" (AppImage)
-
-Modern distributions like Ubuntu 22.04+ dropped `libfuse2` by default. If you choose the AppImage format:
 ```bash
-# Ubuntu/Debian
-sudo apt-get install libfuse2
-
-# Fedora
-sudo dnf install fuse
+bash -n cursor-ai.sh
+./cursor-ai.sh --help
+FAKE_HOME=$(mktemp -d)
+HOME="$FAKE_HOME" ./cursor-ai.sh --install   # then inspect $FAKE_HOME and remove it
 ```
 
-### Installation Verification Failed
+## Current state and limitations
 
-If the script fails at the validation step, it means the binary was downloaded but lacks execution permissions, or a native package failed to link in `/usr/bin/cursor`.
-**Solution:** Run the built-in repair tool:
-```bash
-./cursor-ai.sh --repair
-```
+- No automated tests and no CI. Regressions can only be caught by hand.
+- Interactive only: every question is read from `/dev/tty`, so the script cannot run unattended (a run without a terminal dies at the first prompt).
+- The DEB and RPM paths were not exercised in the last review, because the audit machine is Arch based and has no `apt`, `dnf`, `yum`, `zypper` or `rpm`. Only their download URL resolution was verified. On Arch, `dpkg` can exist without `apt`, in which case a DEB install falls back to `dpkg -i` with no dependency resolution.
+- A requested `armv7l` build is answered by Cursor's API with the `aarch64` AppImage, so the 32-bit ARM branch effectively installs an incompatible binary. x64 and arm64 resolve to the matching builds.
+- There is no checksum or signature verification: the script trusts the HTTPS download and only checks that the file is non-empty and executable.
+- `--uninstall` and `--repair` only look at the known paths listed above. If you answer a custom directory at the install prompt, the AppImage will live outside that list and the removal step will not find it.
+- Updates are AppImage-only; DEB and RPM are updated by installing the new package over the old one.
+- The root guard blocks `sudo ./cursor-ai.sh` (it detects `EUID 0` with `SUDO_USER` set). Running the script directly as root is not blocked and would create the integration files under `/root`.
+- The version shown during installation comes from the download URL, so the script always installs the current release and cannot pin an older one.
 
-### "Permission Denied" during Cleanup
+## Documentation
 
-The script uses `mktemp -d` to sandbox downloads. If interrupted abruptly (e.g., `SIGKILL`), the OS might lock the temp folder. 
-**Solution:** The script handles standard interruptions (`Ctrl+C`), but in severe cases, manually clear `/tmp/cursor_installer.*`.
-
----
-
-## Contributing
-
-We welcome contributions to make this installer even more robust!
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feat/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'feat: Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feat/AmazingFeature`)
-5. Open a Pull Request
-
-### Bash Guidelines
-- Always use `[[ ]]` over `[ ]`.
-- Maintain POSIX compliance in core utilities (e.g., `df -P`).
-- Prefix private variables with `local`.
-- Ensure new features are tested against ShellCheck.
-
----
+There is no `docs/` directory. This README and the header comments inside `cursor-ai.sh` are the documentation; `./cursor-ai.sh --help` is the command line reference.
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
-
----
+MIT. See [`LICENSE`](LICENSE).
