@@ -147,18 +147,23 @@ download_with_progress() {
     local output=$2
     local description=$3
     local retries=0
-    local temp_file="${TEMP_DIR}/$(basename "$output")"
+    # Keep the transfer separate even when the destination is a temporary DEB/RPM.
+    local temp_file
     
     mkdir -p "${TEMP_DIR}"
+    temp_file=$(mktemp "${TEMP_DIR}/download.XXXXXX") || return 1
     
     while [ $retries -lt $MAX_RETRIES ]; do
         log "INFO" "Downloading $description (attempt $((retries + 1))/$MAX_RETRIES)..."
 
-        if curl -L --progress-bar --connect-timeout $TIMEOUT "$url" -o "$temp_file"; then
+        if curl --fail -L --progress-bar --connect-timeout "$TIMEOUT" \
+            --speed-limit 1 --speed-time "$TIMEOUT" "$url" -o "$temp_file"; then
             if [[ -s "$temp_file" ]]; then
-                mv "$temp_file" "$output"
-                log "SUCCESS" "Download completed successfully!"
-                return 0
+                if mv -- "$temp_file" "$output"; then
+                    log "SUCCESS" "Download completed successfully!"
+                    return 0
+                fi
+                log "ERROR" "Could not save the downloaded file: $output"
             else
                 log "ERROR" "Downloaded file is empty or corrupted."
             fi
@@ -175,6 +180,7 @@ download_with_progress() {
     done
 
     log "ERROR" "Failed to download $description after $MAX_RETRIES attempts."
+    rm -f -- "$temp_file"
     return 1
 }
 
@@ -296,7 +302,11 @@ get_download_url() {
     log "INFO" "Getting download URL for $format ($arch)..." >&2
     
     # Get the redirect URL safely
-    final_url=$(curl -s -L -I -w "%{url_effective}" -o /dev/null "$api_url" 2>/dev/null)
+    if ! final_url=$(curl --fail -s -L -I --connect-timeout "$TIMEOUT" \
+        --max-time "$TIMEOUT" -w "%{url_effective}" -o /dev/null "$api_url" 2>/dev/null); then
+        log "ERROR" "Failed to get download URL" >&2
+        return 1
+    fi
     
     if [[ -n "$final_url" ]]; then
         log "SUCCESS" "URL obtained: $final_url" >&2
@@ -1232,5 +1242,7 @@ main() {
 }
 
 # Execute the script
-mkdir -p "${APP_DIR}" || error "Failed to create application directory: ${APP_DIR}"
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    mkdir -p "${APP_DIR}" || error "Failed to create application directory: ${APP_DIR}"
+    main "$@"
+fi

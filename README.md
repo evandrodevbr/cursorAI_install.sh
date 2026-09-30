@@ -162,7 +162,7 @@ HOME="$FAKE_HOME" ./cursor-ai.sh --install   # then inspect $FAKE_HOME and remov
 
 ## Current state and limitations
 
-- No automated tests and no CI. Regressions can only be caught by hand.
+- Offline transfer regressions are automated; there is no CI yet.
 - Interactive only: every question is read from `/dev/tty`, so the script cannot run unattended (a run without a terminal dies at the first prompt).
 - The DEB and RPM paths were not exercised in the last review, because the audit machine is Arch based and has no `apt`, `dnf`, `yum`, `zypper` or `rpm`. Only their download URL resolution was verified. On Arch, `dpkg` can exist without `apt`, in which case a DEB install falls back to `dpkg -i` with no dependency resolution.
 - A requested `armv7l` build is answered by Cursor's API with the `aarch64` AppImage, so the 32-bit ARM branch effectively installs an incompatible binary. x64 and arm64 resolve to the matching builds.
@@ -179,3 +179,9 @@ There is no `docs/` directory. This README and the header comments inside `curso
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
+
+## Offline regression checks
+
+Downloads now reject HTTP error responses, bound stalled transfers, and report a failed final move. Each transfer uses a separate temporary file, including DEB/RPM packages whose final destination is also inside the temporary directory. A failed transfer preserves an existing destination. URL lookup rejects HTTP errors before returning a redirect URL.
+
+Run `bash -n cursor-ai.sh` and `python3 -m unittest discover -s tests -v` (5 offline tests). The tests use fake HTTP transfers and do not install, uninstall or launch Cursor. Real package-manager and AppImage verification remains a separate Linux check.
